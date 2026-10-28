@@ -45,6 +45,8 @@ def main():
     report={'revision':result['revision'],'load':loads,'runs':per_run,
             'physical_ssd_bytes':None,'io_note':'Logical payload/read calls and aligned completions only; physical SSD traffic and cold-I/O state are unmeasured.',
             'vram_note':'CUDA free-memory observations at phase boundaries include device/driver/desktop use; not a continuous per-process peak measurement.'}
+    telemetry=a.run/'telemetry.json'
+    if telemetry.exists():report['sampled_process_and_device_memory']=json.loads(telemetry.read_text())
     (a.run/'benchmark-summary.json').write_text(json.dumps(report,indent=2));print(json.dumps(report,indent=2))
 
 

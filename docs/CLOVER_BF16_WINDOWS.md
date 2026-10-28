@@ -12,6 +12,15 @@ The regular engine targets and their options remain separate.
 
 ## Sources
 
+The tokenizer wrapper records native process working-set/commit peaks and
+samples NVML whole-device memory every 100 ms into `telemetry.json`. The GPU
+peak includes desktop/other processes and is a sampled device peak, not a
+per-process GPU allocation counter. Known buffer allocations and native
+phase-boundary memory observations remain separate. Optional tool dependency
+pins are in `tools/clover/requirements.txt`; install CUDA Torch separately as
+that file describes, then install those dependencies. Physical SSD bytes are
+not inferred from any of these counters.
+
 - Strata base: `46c152a1310f77cd2f0ce2c7cd213962df14fe83`.
 - [HF checkpoint and implementation](https://huggingface.co/Diffuspace/Clover-35B-A3B-Preview/tree/4b0402b65e523d0183a14c431955438714cb16ff): `4b0402b65e523d0183a14c431955438714cb16ff`.
 - [Clover project](https://github.com/DiffuSpace/Clover-35B-A3B-Preview/tree/e5a130a48e4a6d6c1d05c1c2338bce555d674044): `e5a130a48e4a6d6c1d05c1c2338bce555d674044`.

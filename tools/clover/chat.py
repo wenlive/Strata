@@ -4,6 +4,7 @@ This Python entry only handles tokenizer, config and decoded text. All model
 weights, expert tiering, attention/GDN and generation execute in strata-clover.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -56,12 +57,22 @@ def main():
         if value is not None:config[key+'_penalty']=value
     (a.output/'request.json').write_text(json.dumps({'messages':messages,'thinking':a.thinking,'tokenizer_root':index['model_root'],'tokenizer_class':type(tokenizer).__name__},indent=2),encoding='utf-8')
     path=a.output/'config.json';path.write_text(json.dumps(config,indent=2),encoding='utf-8')
+    source_root=Path(__file__).resolve().parents[2]
+    commit=subprocess.run(['git','-C',str(source_root),'rev-parse','HEAD'],capture_output=True,text=True)
+    dirty=subprocess.run(['git','-C',str(source_root),'status','--short'],capture_output=True,text=True)
+    digest=hashlib.sha256()
+    with a.exe.open('rb') as f:
+        for block in iter(lambda:f.read(1024**2),b''):digest.update(block)
+    (a.output/'source-provenance.json').write_text(json.dumps({'source_commit':commit.stdout.strip(),
+        'source_dirty':dirty.stdout.splitlines(),'native_executable':str(a.exe.resolve()),'native_executable_sha256':digest.hexdigest()},indent=2),encoding='utf-8')
     env=os.environ.copy();cuda=env.get('CUDA_PATH')
     if cuda:env['PATH']=str(Path(cuda)/'bin/x64')+os.pathsep+str(Path(cuda)/'bin')+os.pathsep+env['PATH']
     start=time.perf_counter()
     with (a.output/'native.log').open('w',encoding='utf-8') as log:
         proc=subprocess.Popen([str(a.exe), '--config',str(path)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                               text=True,encoding='utf-8',errors='replace',env=env)
+        from telemetry import MemorySampler
+        sampler=MemorySampler(proc.pid);sampler.start()
         for line in proc.stdout:
             log.write(line);log.flush()
             if line.startswith(('LOAD ','ROUND ')):print(line.rstrip(),flush=True)
@@ -70,6 +81,8 @@ def main():
                 print(text,flush=True)
                 (a.output/f'completion-{result["repeat"]}.txt').write_text(text,encoding='utf-8')
         code=proc.wait()
+        memory=sampler.finish()
+    (a.output/'telemetry.json').write_text(json.dumps(memory,indent=2),encoding='utf-8')
     (a.output/'process.json').write_text(json.dumps({'exit_code':code,'wall_seconds':time.perf_counter()-start,
         'command':[str(a.exe),'--config',str(path)]},indent=2),encoding='utf-8')
     if code:raise SystemExit(code)

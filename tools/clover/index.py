@@ -111,12 +111,21 @@ def main():
     a=p.parse_args()
     c=json.loads((a.model/'config.json').read_text(encoding='utf-8'))
     source=json.loads((a.model/'source-manifest.json').read_text(encoding='utf-8'))
+    source_files={x['rfilename']:x for x in source['siblings']}
+    # Also bind config/tokenizer/reference code to the immutable repository
+    # revision. Same-size edits must not silently change generation semantics.
+    for name in ('config.json','generation_config.json','tokenizer_config.json','chat_template.jinja',
+                 'model.safetensors.index.json','modeling_clover_moe.py','configuration_clover_moe.py','sampling_clover_moe.py'):
+        data=(a.model/name).read_bytes();expected_blob=source_files[name].get('blobId')
+        actual_blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+        if expected_blob and actual_blob!=expected_blob:
+            raise ValueError(f'Official revision Git blob mismatch: {name}')
     wm=json.loads((a.model/'model.safetensors.index.json').read_text(encoding='utf-8'))['weight_map']
     if a.audit_headers:
         headers=json.loads(a.audit_headers.read_text(encoding='utf-8'))
     else:
         headers={}
-        api={x['rfilename']:x for x in source['siblings']}
+        api=source_files
         for file in sorted(set(wm.values())):
             path=a.model/file
             size=path.stat().st_size
