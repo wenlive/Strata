@@ -19,9 +19,9 @@ void Model::linear(const std::string& name,const BF* x,BF* y,int t) {
     dense_.bf16(reinterpret_cast<const uint16_t*>(x),reinterpret_cast<const uint16_t*>(weight(name)),fp32_.as<float>(),t,n,k);
     ops::cast(fp32_.as<float>(),y,t*n,stream_);
 }
-Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream)
+Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,bool layer_test)
     :store_(source),context_(context),max_tokens_(max_tokens),stream_(stream),experts_(source,max_tokens,stream) {
-    require(source.index.at("scope")=="full-model","Full model requires a complete official model index");
+    require(source.index.at("scope")=="full-model"||(layer_test&&source.index.at("scope")=="selected-official-layer-test"),"Full model requires a complete official model index");
     config=source.index.at("config");
     h_=config.at("hidden_size");ff_=config.at("moe_intermediate_size");
     kh_=config.at("linear_num_key_heads");vh_=config.at("linear_num_value_heads");
@@ -29,7 +29,7 @@ Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream)
     nh_=config.at("num_attention_heads");nkv_=config.at("num_key_value_heads");hd_=config.at("head_dim");
     sf_=config.at("shared_expert_intermediate_size");top_k_=config.at("num_experts_per_tok");
     vocab=config.at("vocab_size");block_size=config.at("block_size");ch_=2*kh_*kd_+vh_*vd_;
-    require(h_==2048&&ff_==512&&kh_==16&&vh_==32&&kd_==128&&vd_==128&&nh_==16&&nkv_==2&&hd_==256&&sf_==512&&block_size==32&&store_.layers==40&&store_.experts==256,"Unsupported Clover checkpoint geometry");
+    require(h_==2048&&ff_==512&&kh_==16&&vh_==32&&kd_==128&&vd_==128&&nh_==16&&nkv_==2&&hd_==256&&sf_==512&&block_size==32&&(store_.layers==40||(layer_test&&store_.layers==1))&&store_.experts==256,"Unsupported Clover checkpoint geometry");
     require(!config.at("attention_bias").get<bool>()&&config.at("attn_output_gate").get<bool>()&&config.at("num_shared_experts")==1&&!config.at("tie_word_embeddings").get<bool>(),"Unsupported Clover architecture option");
     require(config.at("linear_conv_kernel_dim")==4 && config.at("rope_parameters").at("rope_type")=="default","Unsupported convolution/RoPE variant");
     require(context>0&&context<=8192&&max_tokens>0&&max_tokens<=32,"First Clover driver supports context <=8192, batch <=32");
@@ -70,13 +70,24 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
     require(!preview||(!commit&&t<=block_size&&block_size%t==0),"Preview must be read-only and width must divide checkpoint block size");
     for(int token:tokens) require(token>=0&&token<vocab,"Token id out of vocabulary");
     const auto before=store_.stats();const auto start=Clock::now();
+    if(!trace_root_.empty()) {require(!std::filesystem::exists(trace_root_),"Trace output already exists");std::filesystem::create_directories(trace_root_);}
+    auto trace=[&](const std::string& name,const void* device,size_t bytes) {
+        if(trace_root_.empty()) return;
+        CLOVER_CUDA(cudaStreamSynchronize(stream_));std::vector<uint8_t> host(bytes);
+        CLOVER_CUDA(cudaMemcpy(host.data(),device,bytes,cudaMemcpyDeviceToHost));
+        std::ofstream file(trace_root_/name,std::ios::binary);file.write(reinterpret_cast<const char*>(host.data()),std::streamsize(bytes));require(bool(file),"Trace write failed");
+    };
     CLOVER_CUDA(cudaMemcpyAsync(ids_.p,tokens.data(),size_t(t)*4,cudaMemcpyHostToDevice,stream_));
     ops::embedding(weight("model.embed_tokens.weight"),ids_.as<int>(),x_.as<BF>(),t,h_,stream_);
+    trace("embedding.bf16",x_.p,size_t(t)*h_*2);
     Json uniques=Json::array(),coresets=Json::array();
     const float eps=config.at("rms_norm_eps");
     for(int l=0;l<store_.layers;++l) {
         const std::string p="model.layers."+std::to_string(l)+".";auto& s=state_[size_t(l)];
+        trace("layer"+std::to_string(l)+"-input.bf16",x_.p,size_t(t)*h_*2);
         ops::norm(x_.as<BF>(),weight(p+"input_layernorm.weight"),nullptr,xn_.as<BF>(),t,h_,eps,true,stream_);
+        const std::string trace_pre="layer"+std::to_string(l)+"-";
+        trace(trace_pre+"input_norm.bf16",xn_.p,size_t(t)*h_*2);
         if(s.linear) {
             const std::string a=p+"linear_attn.";
             linear(a+"in_proj_qkv.weight",xn_.as<BF>(),raw_.as<BF>(),t);
@@ -89,6 +100,10 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
             if(preview) ops::gdn_preview(mixed_.as<BF>(),qf_.as<float>(),kf_.as<float>(),g_.as<float>(),weight(a+"bd_softmax_logit_scale"),weight(a+"bd_softmax_history_bias"),weight(a+"bd_softmax_history_c"),s.ssm.as<float>(),features_.as<BF>(),t,kh_,vh_,kd_,vd_,block_size,stream_);
             else ops::gdn_scan(mixed_.as<BF>(),qf_.as<float>(),kf_.as<float>(),g_.as<float>(),beta_.as<BF>(),s.ssm.as<float>(),commit?s.ssm.as<float>():nullptr,features_.as<BF>(),t,kh_,vh_,kd_,vd_,stream_);
             ops::norm(features_.as<BF>(),weight(a+"norm.weight"),z_.as<BF>(),features_norm_.as<BF>(),t*vh_,vd_,eps,false,stream_);
+            trace(trace_pre+"gdn_raw.bf16",raw_.p,size_t(t)*ch_*2);
+            trace(trace_pre+"gdn_mixed.bf16",mixed_.p,size_t(t)*ch_*2);
+            trace(trace_pre+"gdn_y.bf16",features_.p,size_t(t)*vh_*vd_*2);
+            trace(trace_pre+"gdn_normalized.bf16",features_norm_.p,size_t(t)*vh_*vd_*2);
             linear(a+"out_proj.weight",features_norm_.as<BF>(),mixer_.as<BF>(),t);
             if(commit) ops::gdn_commit_conv(raw_.as<BF>(),s.conv.as<BF>(),t,ch_,4,stream_);
         } else {
@@ -109,14 +124,18 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
                 CLOVER_CUDA(cudaMemcpyAsync(s.value.as<BF>()+at,vnew_.p,bytes,cudaMemcpyDeviceToDevice,stream_));
             }
         }
+        trace(trace_pre+"mixer.bf16",mixer_.p,size_t(t)*h_*2);
         ops::residual(x_.as<BF>(),mixer_.as<BF>(),x_.as<BF>(),t*h_,stream_);
         ops::norm(x_.as<BF>(),weight(p+"post_attention_layernorm.weight"),nullptr,xn_.as<BF>(),t,h_,eps,true,stream_);
+        trace(trace_pre+"post_norm.bf16",xn_.p,size_t(t)*h_*2);
         linear(p+"mlp.gate.weight",xn_.as<BF>(),router_.as<BF>(),t);
         std::vector<BF> router_bf(size_t(t)*store_.experts);
         CLOVER_CUDA(cudaMemcpyAsync(router_bf.data(),router_.p,router_bf.size()*2,cudaMemcpyDeviceToHost,stream_));
         CLOVER_CUDA(cudaStreamSynchronize(stream_));
         std::vector<float> router_float(router_bf.size());for(size_t i=0;i<router_bf.size();++i) router_float[i]=__bfloat162float(router_bf[i]);
         auto routes=route(router_float,t,store_.experts,top_k_,preview&&config.at("moe_block_coreset_enabled").get<bool>(),config.at("moe_block_coreset_top_p"));
+        trace(trace_pre+"router.bf16",router_.p,size_t(t)*store_.experts*2);
+        if(!trace_root_.empty()) {std::ofstream out(trace_root_/(trace_pre+"routes.json"));out<<Json{{"ids",routes.ids},{"weights",routes.weights},{"coreset",routes.coreset}}.dump(2)<<'\n';}
         std::set<int> used(routes.ids.begin(),routes.ids.end());uniques.push_back(used.size());coresets.push_back(routes.coreset.size());
         experts_.run(l,xn_.as<BF>(),expert_out_.as<BF>(),t,top_k_,routes.ids,routes.weights);
         const std::string shared=p+"mlp.shared_expert.";
@@ -128,9 +147,12 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
         ops::sigmoid_mul(shared_out_.as<BF>(),shared_scale_.as<BF>(),shared_out_.as<BF>(),t,h_,true,stream_);
         ops::residual(expert_out_.as<BF>(),shared_out_.as<BF>(),expert_out_.as<BF>(),t*h_,stream_);
         ops::residual(x_.as<BF>(),expert_out_.as<BF>(),x_.as<BF>(),t*h_,stream_);
+        trace(trace_pre+"output.bf16",x_.p,size_t(t)*h_*2);
     }
     ops::norm(x_.as<BF>(),weight("model.norm.weight"),nullptr,xn_.as<BF>(),t,h_,eps,true,stream_);
+    trace("final_norm.bf16",xn_.p,size_t(t)*h_*2);
     linear("lm_head.weight",xn_.as<BF>(),logits_.as<BF>(),t);
+    trace("logits.bf16",logits_.p,size_t(t)*vocab*2);
     std::vector<BF> logits_bf(size_t(t)*vocab);
     CLOVER_CUDA(cudaMemcpyAsync(logits_bf.data(),logits_.p,logits_bf.size()*2,cudaMemcpyDeviceToHost,stream_));
     CLOVER_CUDA(cudaGetLastError());CLOVER_CUDA(cudaStreamSynchronize(stream_));
@@ -142,6 +164,7 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
         {"prefix_before",prefix_before},{"prefix_after",prefix},{"elapsed_ms",milliseconds(start)},
         {"experts_unique_per_layer",uniques},{"coreset_size_per_layer",coresets},
         {"cache_io",counter_delta(store_.stats(),before)},{"control_h2d_bytes",control_h2d},{"memory",memory_snapshot()}};
+    if(!trace_root_.empty()) result.measurement["trace_directory"]=trace_root_.string();
     std::cout<<"PHASE "<<result.measurement.dump()<<std::endl;return result;
 }
 Json Model::allocation() const {

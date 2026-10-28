@@ -22,6 +22,7 @@ def main():
     p.add_argument('--draft-width',type=int,choices=(2,4,8,16,32),default=8)
     p.add_argument('--max-new-tokens',type=int,default=16)
     p.add_argument('--context-tokens',type=int,default=256)
+    p.add_argument('--prefill-chunk',type=int,default=32)
     p.add_argument('--ram-cache-mib',type=int,default=4096)
     p.add_argument('--vram-cache-mib',type=int,default=6144)
     p.add_argument('--staging-mib',type=int,default=16)
@@ -29,6 +30,7 @@ def main():
     p.add_argument('--thinking',action='store_true',help='Enable the official thinking template (default: disabled)')
     p.add_argument('--audit-state',action='store_true')
     p.add_argument('--dump-state',action='store_true')
+    p.add_argument('--trace',action='store_true',help='Write per-layer correctness traces; includes extra synchronization and I/O')
     for key in ('presence','frequency','repetition'):
         p.add_argument(f'--{key}-penalty',type=float)
     a=p.parse_args()
@@ -43,11 +45,12 @@ def main():
     a.output.mkdir(parents=True,exist_ok=False)
     config={'index':str(a.index.resolve()),'input_tokens':tokens,'mode':a.mode,
             'accept_rule':a.accept_rule,'draft_width':a.draft_width,
-            'max_new_tokens':a.max_new_tokens,'context_tokens':a.context_tokens,
+            'max_new_tokens':a.max_new_tokens,'context_tokens':a.context_tokens,'prefill_chunk':a.prefill_chunk,
             'ram_cache_mib':a.ram_cache_mib,'vram_cache_mib':a.vram_cache_mib,
             'staging_mib':a.staging_mib,'repeats':a.repeats,'audit_state':a.audit_state,
             'result_file':str((a.output/'result.json').resolve())}
     if a.dump_state:config['dump_final_state']=str((a.output/'state').resolve())
+    if a.trace:config['trace_directory']=str((a.output/'trace').resolve())
     for key in ('presence','frequency','repetition'):
         value=getattr(a,key+'_penalty')
         if value is not None:config[key+'_penalty']=value

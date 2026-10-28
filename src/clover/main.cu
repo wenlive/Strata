@@ -49,9 +49,9 @@ void help() {
     std::cout<<"strata-clover --config RUN.json\n"
         "Native Windows/CUDA BF16 Clover, bounded SSD/RAM/VRAM experts. Experimental.\n"
         "Required JSON fields: index (complete official BF16 index), input_tokens (nonempty integer array).\n"
-        "Options: mode=selfspec|causal|forward (selfspec); max_new_tokens=16; context_tokens=256; draft_width=8; accept_rule=exact.\n"
+        "Options: mode=selfspec|causal|forward (selfspec); max_new_tokens=16; context_tokens=256; prefill_chunk=32; draft_width=8; accept_rule=exact.\n"
         "Expert budgets: ram_cache_mib=4096; vram_cache_mib=6144; staging_mib=16. All are independent.\n"
-        "Other fields: repeats=1, audit_state=false, dump_final_state (new directory), result_file (JSON).\n"
+        "Other fields: repeats=1, audit_state=false, dump_final_state (new directory), trace_directory (new directory), result_file (JSON).\n"
         "Optional presence_penalty, frequency_penalty, repetition_penalty override checkpoint generation defaults.\n"
         "Greedy sampling only. Exact acceptance compares drafts with penalized causal verify argmax.\n"
         "Checkpoint block size remains 32; runtime draft width must be 2/4/8/16/32.\n"
@@ -65,13 +65,15 @@ int main(int argc,char** argv) {
         if(argc==2&&std::string(argv[1])=="--help") {help();return 0;}
         require(argc==3&&std::string(argv[1])=="--config","Usage: strata-clover --config RUN.json (or --help)");
         const Json cfg=read_json(argv[2]);
-        const std::set<std::string> keys={"index","input_tokens","mode","max_new_tokens","context_tokens","draft_width","accept_rule","ram_cache_mib","vram_cache_mib","staging_mib","repeats","audit_state","dump_final_state","result_file","presence_penalty","frequency_penalty","repetition_penalty"};
+        const std::set<std::string> keys={"index","input_tokens","mode","max_new_tokens","context_tokens","prefill_chunk","draft_width","accept_rule","ram_cache_mib","vram_cache_mib","staging_mib","repeats","audit_state","dump_final_state","trace_directory","result_file","presence_penalty","frequency_penalty","repetition_penalty"};
         for(const auto& item:cfg.items()) require(keys.count(item.key())!=0,"Unknown run option: "+item.key());
         const auto prompt=cfg.at("input_tokens").get<std::vector<int>>();require(!prompt.empty(),"Empty prompt");
         const std::string mode=cfg.value("mode",std::string("selfspec"));
         require(mode=="selfspec"||mode=="causal"||mode=="forward","Unknown mode");
         require(cfg.value("accept_rule",std::string("exact"))=="exact","Only exact acceptance is implemented");
         const int width=cfg.value("draft_width",8),context=cfg.value("context_tokens",256),limit=cfg.value("max_new_tokens",16),repeats=cfg.value("repeats",1);
+        const int prefill_chunk=cfg.value("prefill_chunk",32);
+        require(context>0&&context<=8192&&prefill_chunk>=1&&prefill_chunk<=32,"Context must be 1..8192 and prefill_chunk 1..32");
         require(width>=2&&width<=32&&32%width==0,"Runtime draft width must divide unchanged checkpoint block size 32");
         require(repeats>=1&&repeats<=100,"Invalid repeat count");
         require(mode=="forward"||(limit>0&&prompt.size()+size_t(limit)+size_t(width)<=size_t(context)),"Prompt/output/draft reserve exceeds context capacity");
@@ -86,12 +88,17 @@ int main(int argc,char** argv) {
             std::cout<<"LOAD "<<Json{{"startup_ms",milliseconds(startup)},{"revision",source.index.at("revision")},{"allocation",model.allocation()},{"memory",memory_snapshot()}}.dump()<<std::endl;
             for(int repeat=0;repeat<repeats;++repeat) {
                 model.reset();Penalties penalty(gen,cfg,model.vocab);
+                size_t phase_id=0;
+                auto forward=[&](const std::vector<int>& input,bool preview,bool commit,const std::string& phase) {
+                    if(cfg.contains("trace_directory")) model.trace_to(std::filesystem::path(cfg.at("trace_directory").get<std::string>())/("repeat"+std::to_string(repeat))/(std::to_string(phase_id++)+"-"+phase));
+                    return model.forward(input,preview,commit,phase);
+                };
                 const bool audit=cfg.value("audit_state",false);double audit_ms=0;
                 std::vector<int> output,committed=prompt;Json rounds=Json::array();
                 const auto before=source.stats();const auto generation=Clock::now();ForwardResult prefill;
                 for(size_t at=0;at<prompt.size();) {
-                    const size_t n=std::min<size_t>(32,prompt.size()-at);
-                    prefill=model.forward(std::vector<int>(prompt.begin()+std::ptrdiff_t(at),prompt.begin()+std::ptrdiff_t(at+n)),false,true,"prefill");at+=n;
+                    const size_t n=std::min<size_t>(size_t(prefill_chunk),prompt.size()-at);
+                    prefill=forward(std::vector<int>(prompt.begin()+std::ptrdiff_t(at),prompt.begin()+std::ptrdiff_t(at+n)),false,true,"prefill");at+=n;
                 }
                 double ttft=0;int pending=-1;Clock::time_point first_token;
                 if(mode!="forward") {
@@ -100,10 +107,11 @@ int main(int argc,char** argv) {
                     penalty.apply(initial,1,model.vocab,false,{},false);pending=argmax(initial,0,model.vocab);
                     output.push_back(pending);penalty.commit(pending);first_token=Clock::now();ttft=milliseconds(generation);
                 }
+                std::vector<float>().swap(prefill.logits);
                 while(mode!="forward" && int(output.size())<limit&&!penalty.stops.count(output.back())) {
                     const auto round_started=Clock::now();
                     if(mode=="causal") {
-                        auto result=model.forward({pending},false,true,"causal_decode");committed.push_back(pending);
+                        auto result=forward({pending},false,true,"causal_decode");committed.push_back(pending);
                         penalty.apply(result.logits,1,model.vocab,false,{});
                         pending=argmax(result.logits,0,model.vocab);output.push_back(pending);penalty.commit(pending);
                         Json round={{"round",rounds.size()},{"actual_output_tokens",1},{"committed_input_tokens",1},{"elapsed_ms",milliseconds(round_started)}};
@@ -112,18 +120,20 @@ int main(int argc,char** argv) {
                     std::vector<int> block(size_t(width),model.config.at("mask_token_id").get<int>());block[0]=pending;
                     uint64_t clean=0;
                     if(audit) {auto start=Clock::now();clean=model.state_hash();audit_ms+=milliseconds(start);}
-                    auto preview=model.forward(block,true,false,"preview");
+                    auto preview=forward(block,true,false,"preview");
                     penalty.apply(preview.logits,width,model.vocab,true,block);
                     std::vector<int> candidates(size_t(width),0);candidates[0]=pending;
                     for(int row=1;row<width;++row) candidates[size_t(row)]=argmax(preview.logits,row,model.vocab);
-                    auto verify=model.forward(candidates,false,false,"verify");
+                    std::vector<float>().swap(preview.logits);
+                    auto verify=forward(candidates,false,false,"verify");
                     penalty.apply(verify.logits,width,model.vocab,false,candidates);
                     if(audit) {auto start=Clock::now();require(clean==model.state_hash(),"Full-model preview/verify polluted persistent state");audit_ms+=milliseconds(start);}
                     const auto decision=decide_exact(candidates,verify.logits,model.vocab,limit-int(output.size()),penalty.stops);
+                    std::vector<float>().swap(verify.logits);
                     for(int token:decision.output) {output.push_back(token);penalty.commit(token);}
                     const int replay_count=int(decision.commit_inputs.size());
                     const auto& replay=decision.commit_inputs;
-                    auto replay_result=model.forward(replay,false,true,"commit_replay");
+                    auto replay_result=forward(replay,false,true,"commit_replay");
                     committed.insert(committed.end(),replay.begin(),replay.end());pending=decision.pending;
                     Json round={{"round",rounds.size()},{"draft_width",width},{"matched_drafts",decision.matched_drafts},{"emitted_drafts",decision.emitted_drafts},
                                 {"emitted_bonus",decision.emitted_bonus},{"bonus_token",decision.bonus},{"actual_output_tokens",decision.output.size()},{"committed_input_tokens",replay_count},
@@ -137,7 +147,7 @@ int main(int argc,char** argv) {
                     {"mode",mode},{"accept_rule","exact"},{"checkpoint_block_size",model.block_size},{"runtime_draft_width",width},
                     {"input_tokens",prompt},{"output_tokens",output},{"committed_token_ids",committed},{"committed_prefix_length",model.prefix},
                     {"pending_uncommitted_token",pending>=0?Json(pending):Json(nullptr)},{"rounds",rounds},{"ttft_ms",ttft},
-                    {"generation_elapsed_ms",elapsed},{"steady_token_per_second",steady>0?double(output.size()-1)*1000/steady:0},
+                    {"generation_elapsed_ms",elapsed},{"ttft_definition","first output token available, excludes model load"},{"steady_token_per_second",steady>0?double(output.size()-1)*1000/steady:0},
                     {"state_audit_ms",audit_ms},{"runtime_cache_io",counter_delta(source.stats(),before)},{"memory",memory_snapshot()},
                     {"physical_io_note","Physical SSD bytes unmeasured; no cold-cache claim"}};
                 const uint64_t logical=summary["runtime_cache_io"]["logical_file_read_bytes"];

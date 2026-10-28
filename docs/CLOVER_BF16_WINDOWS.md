@@ -4,7 +4,7 @@ This work is opt-in (`STRATA_BUILD_CLOVER=ON`). Current validated capability is
 BF16 expert loading and numerical execution. The 40-layer native driver and
 greedy exact CLI compile. **Complete Clover generation has not been validated
 yet.** Synthetic attention/GDN/router and exact decisions have passed; actual
-single-layer and full-model execution remain separate acceptance gates.
+full-model execution remains a separate acceptance gate.
 
 The adapter uses Strata's `platform::DirectFile` and `prefill::Gemm`. It does
 not use Qwen3.6's all-expert host arena or the quantized native expert kernels.
@@ -194,3 +194,37 @@ EOS/length-truncated output replays only its returned accepted draft prefix.
 Exact acceptance follows SGLang's verify-argmax rule, including its response
 penalty snapshot. It does not assert equivalence to HF block denoising or to
 a different numerical implementation.
+
+## Actual layer comparison and diagnostic tools
+
+With HF FP32 math SDPA selected explicitly, 190 comparisons across official
+layer-0 GDN and layer-3 full-attention weights passed the same predefined BF16
+bounds. Routed expert IDs matched in every step; preview/verify state hashes
+were unchanged. First causal full-attention output and KV were byte-identical.
+Later attention steps retained small differences (maximum relative RMS
+0.002264). The initial default fused-SDPA comparison failed: some 16-token
+steps had up to 10 differing route slots. Q/K and KV matched; attention output
+was the first difference. That failed run is preserved. Native attention keeps
+FP32 probabilities/value accumulation and was not changed for the math-oracle
+pass. Complete-model argmax/routing comparisons remain outstanding.
+
+`strata-clover-layer-test` accepts only an explicit selected-layer test index;
+the generation CLI rejects that scope. The test does not substitute a reduced
+model for complete Clover inference.
+
+`--trace` in `chat.py` records per-layer correctness tensors with additional
+synchronization and disk writes. Keep it off for performance measurements.
+`--prefill-chunk` selects 1..32 causal rows per call (default 32), independently
+of draft width and checkpoint block size. Native JSON fields are
+`trace_directory` and `prefill_chunk`. The native `--help` includes both.
+
+Prepared validation tools (full-model runs still pending):
+
+- `check_forward_trace.py`: layer-streamed HF math oracle for a native short
+  40-layer causal trace; one dense layer and selected expert at a time, with a
+  streamed BF16 output head.
+- `check_committed_state.py`: causally replay the exact committed token sequence
+  and compare every KV/conv/SSM state; pending bonus is excluded.
+- `report_run.py`: aggregate phase times, expert unions, hits, logical reads,
+  H2D and memory. GPU memory is labeled as phase-boundary observations; physical
+  SSD bytes remain unmeasured.

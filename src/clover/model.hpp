@@ -7,12 +7,13 @@ namespace strata::clover {
 struct ForwardResult {std::vector<float> logits;Json measurement;};
 class Model {
 public:
-    Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream);
+    Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,bool layer_test=false);
     void reset();
     ForwardResult forward(const std::vector<int>& tokens,bool preview,bool commit,const std::string& phase);
     void save_state(const std::filesystem::path& root);
     uint64_t state_hash();
     Json allocation() const;
+    void trace_to(const std::filesystem::path& root) {trace_root_=root;}
     int prefix=0,vocab=0,block_size=0;
     Json config;
 private:
@@ -22,6 +23,7 @@ private:
     cudaStream_t stream_;
     std::map<std::string,DeviceBuffer> weights_;
     std::vector<State> state_;
+    std::filesystem::path trace_root_;
     prefill::Gemm dense_;
     ExpertExecutor experts_;
     DeviceBuffer x_,xn_,mixer_,expert_out_,shared_gate_,shared_up_,shared_mid_,shared_out_,shared_scale_,router_,ids_,fp32_,logits_;

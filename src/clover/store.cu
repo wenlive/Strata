@@ -44,7 +44,7 @@ ExpertStore::ExpertStore(const std::filesystem::path& path,uint64_t ram_budget,
     require(index.at("format")=="strata-clover-bf16-index" && index.at("version")==1,"Unsupported Clover index format");
     require(index.at("complete").get<bool>(),"Incomplete/metadata-only index cannot run");
     const auto scope=index.at("scope").get<std::string>();
-    require(scope=="full-model" || (expert_test && (scope=="synthetic-expert-test"||scope=="selected-official-expert-test")),"Index scope cannot execute this mode");
+    require(scope=="full-model" || (expert_test && (scope=="synthetic-expert-test"||scope=="selected-official-expert-test"||scope=="selected-official-layer-test")),"Index scope cannot execute this mode");
     root_=index.at("model_root").get<std::string>();
     const auto& c=index.at("config");
     hidden=c.at("hidden_size");ff=c.at("moe_intermediate_size");
