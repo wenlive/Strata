@@ -32,11 +32,11 @@ __global__ void round_output(const float* sum,BF* out,int n) {
 }
 }
 ExpertExecutor::ExpertExecutor(ExpertStore& store,int max_tokens,cudaStream_t stream)
-    :store_(store),max_tokens_(max_tokens),stream_(stream),
-     gathered_(size_t(max_tokens)*store.hidden*2),gate_up_(size_t(max_tokens)*2*store.ff*4),
-     hidden_(size_t(max_tokens)*store.ff*2),down_(size_t(max_tokens)*store.hidden*4),
-     sum_(size_t(max_tokens)*store.hidden*4),row_ids_(size_t(max_tokens)*4),row_weights_(size_t(max_tokens)*4) {
-    require(max_tokens>0 && max_tokens<=4096,"Invalid executor token workspace");
+    :store_(store),max_tokens_(32),stream_(stream),
+     gathered_(size_t(32)*store.hidden*2),gate_up_(size_t(32)*2*store.ff*4),
+     hidden_(size_t(32)*store.ff*2),down_(size_t(32)*store.hidden*4),
+     sum_(size_t(32)*store.hidden*4),row_ids_(size_t(32)*4),row_weights_(size_t(32)*4) {
+    require(max_tokens>0 && max_tokens<=32,"Initial executor supports at most 32 actual rows");
     const char* forced=std::getenv("STRATA_BF16_TC");
     require(!forced||std::atoi(forced)!=2,"STRATA_BF16_TC=2 forces FP16 conversion; unset it for the Clover BF16 baseline");
     int device=0;cudaDeviceProp properties{};CLOVER_CUDA(cudaGetDevice(&device));CLOVER_CUDA(cudaGetDeviceProperties(&properties,device));
@@ -68,11 +68,12 @@ void ExpertExecutor::run(int layer,const BF* x,BF* output,int tokens,int top_k,
         CLOVER_CUDA(cudaMemcpy(row_ids_.p,rows.data(),size_t(n)*4,cudaMemcpyHostToDevice));
         CLOVER_CUDA(cudaMemcpy(row_weights_.p,scales.data(),size_t(n)*4,cudaMemcpyHostToDevice));
         const BF* blob=store_.acquire(layer,e);
+        CLOVER_CUDA(cudaMemsetAsync(gathered_.p,0,gathered_.bytes,stream_));
         gather<<<(n*store_.hidden+255)/256,256,0,stream_>>>(x,gathered_.as<BF>(),row_ids_.as<int>(),store_.hidden,n);
-        gemm_.bf16(gathered_.as<uint16_t>(),reinterpret_cast<const uint16_t*>(blob),gate_up_.as<float>(),n,2*store_.ff,store_.hidden);
-        swiglu<<<(n*store_.ff+255)/256,256,0,stream_>>>(gate_up_.as<float>(),hidden_.as<BF>(),store_.ff,n);
+        gemm_.bf16(gathered_.as<uint16_t>(),reinterpret_cast<const uint16_t*>(blob),gate_up_.as<float>(),max_tokens_,2*store_.ff,store_.hidden);
+        swiglu<<<(max_tokens_*store_.ff+255)/256,256,0,stream_>>>(gate_up_.as<float>(),hidden_.as<BF>(),store_.ff,max_tokens_);
         gemm_.bf16(hidden_.as<uint16_t>(),reinterpret_cast<const uint16_t*>(blob)+store_.gu_bytes/2,
-                   down_.as<float>(),n,store_.hidden,store_.ff);
+                   down_.as<float>(),max_tokens_,store_.hidden,store_.ff);
         combine<<<(n*store_.hidden+255)/256,256,0,stream_>>>(down_.as<float>(),sum_.as<float>(),row_ids_.as<int>(),row_weights_.as<float>(),store_.hidden,n);
         CLOVER_CUDA(cudaGetLastError());store_.used(layer,e);
     }
@@ -80,7 +81,7 @@ void ExpertExecutor::run(int layer,const BF* x,BF* output,int tokens,int top_k,
     CLOVER_CUDA(cudaGetLastError());
 }
 Json ExpertExecutor::workspace() const {
-    return {{"max_tokens",max_tokens_},{"device_activation_bytes",gathered_.bytes+gate_up_.bytes+hidden_.bytes+down_.bytes+sum_.bytes+row_ids_.bytes+row_weights_.bytes},
+    return {{"max_tokens",max_tokens_},{"gemm_compute_rows",max_tokens_},{"device_activation_bytes",gathered_.bytes+gate_up_.bytes+hidden_.bytes+down_.bytes+sum_.bytes+row_ids_.bytes+row_weights_.bytes},
             {"strata_gemm_workspace_bytes",32u<<20},{"weight_dtype","BF16"},{"gemm_accumulator","FP32"}};
 }
 } // namespace strata::clover

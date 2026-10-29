@@ -1,10 +1,10 @@
 # Experimental Clover BF16 adapter on Windows
 
-This work is opt-in (`STRATA_BUILD_CLOVER=ON`). Current validated capability is
-BF16 expert loading and numerical execution. The 40-layer native driver and
-greedy exact CLI compile. **Complete Clover generation has not been validated
-yet.** Synthetic attention/GDN/router and exact decisions have passed; actual
-full-model execution remains a separate acceptance gate.
+This work is opt-in (`STRATA_BUILD_CLOVER=ON`). Complete official BF16 weights
+have generated short text through the native 40-layer self-speculative exact
+CLI on Windows. Expert, selected-layer and full-state tests have passed.
+Cross-engine full-forward numerical differences and performance measurements
+are tracked separately below; this is an experimental single-request CLI.
 
 The adapter uses Strata's `platform::DirectFile` and `prefill::Gemm`. It does
 not use Qwen3.6's all-expert host arena or the quantized native expert kernels.
@@ -203,6 +203,28 @@ EOS/length-truncated output replays only its returned accepted draft prefix.
 Exact acceptance follows SGLang's verify-argmax rule, including its response
 penalty snapshot. It does not assert equivalence to HF block denoising or to
 a different numerical implementation.
+
+## Fixed GEMM geometry and full-model state validation
+
+Dense and routed-expert GEMMs now always compute 32 rows. Actual inputs occupy
+the first rows; the rest are zero. Only actual rows enter attention, GDN,
+coreset, routing, outputs and persistent state. This compute padding is separate
+from runtime draft width and checkpoint block size. It does not add model tokens
+or experts. The additional dense input workspace is 256 KiB.
+
+This was required by an actual failed test: changing causal batch sizes changed
+BF16 projection rounding and amplified differences through sparse routing.
+Fixing GEMM geometry made a complete self-speculative run's 80 KV/conv/SSM
+state tensors byte-identical to one-token causal replay with a smaller cache.
+Full official-model controlled verification accepted 7, 3 and 0 drafts as
+expected. All 240 resulting state tensor files matched direct causal execution
+by SHA256. Preview and verify did not mutate persistent state. The failed
+variable-geometry runs remain in the task evidence.
+
+After this change, synthetic and selected official expert tests and selected
+layer math-SDPA comparisons were rerun. They passed the existing bounds;
+expert results have small BF16 differences from variable-shape Torch GEMMs,
+so the earlier zero-error measurements describe the earlier revision only.
 
 ## Actual layer comparison and diagnostic tools
 

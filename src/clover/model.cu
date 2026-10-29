@@ -15,8 +15,17 @@ void Model::linear(const std::string& name,const BF* x,BF* y,int t) {
     const auto& shape=store_.index.at("tensors").at(name).at("shape");
     require(shape.size()==2,"Linear weight is not a matrix: "+name);
     int n=shape.at(0),k=shape.at(1);
-    require(size_t(t)*n*4<=fp32_.bytes,"Dense GEMM workspace overflow");
-    dense_.bf16(reinterpret_cast<const uint16_t*>(x),reinterpret_cast<const uint16_t*>(weight(name)),fp32_.as<float>(),t,n,k);
+    require(size_t(max_tokens_)*n*4<=fp32_.bytes && size_t(max_tokens_)*k*2<=dense_input_.bytes,"Dense GEMM workspace overflow");
+    // Keep cuBLAS's row geometry fixed across prefill/verify/replay/decode.
+    // BF16 rounding at router ties must not depend on a speculative batch's
+    // acceptance length. Padding is never passed to attention, routing or state.
+    const BF* input=x;
+    if(t<max_tokens_) {
+        CLOVER_CUDA(cudaMemcpyAsync(dense_input_.p,x,size_t(t)*k*2,cudaMemcpyDeviceToDevice,stream_));
+        CLOVER_CUDA(cudaMemsetAsync(dense_input_.as<BF>()+size_t(t)*k,0,size_t(max_tokens_-t)*k*2,stream_));
+        input=dense_input_.as<BF>();
+    }
+    dense_.bf16(reinterpret_cast<const uint16_t*>(input),reinterpret_cast<const uint16_t*>(weight(name)),fp32_.as<float>(),max_tokens_,n,k);
     ops::cast(fp32_.as<float>(),y,t*n,stream_);
 }
 Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,bool layer_test)
@@ -47,6 +56,7 @@ Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,
     for(DeviceBuffer* b:{&shared_gate_,&shared_up_,&shared_mid_}) alloc(*b,t*sf_);
     alloc(shared_scale_,t);alloc(router_,t*store_.experts);alloc(ids_,t,4);
     alloc(fp32_,t*std::max({vocab,ch_,2*nh_*hd_}),4);alloc(logits_,t*vocab);
+    alloc(dense_input_,t*std::max({h_,vh_*vd_,nh_*hd_,sf_}));
     alloc(raw_,t*ch_);alloc(mixed_,t*ch_);alloc(qf_,t*kh_*kd_,4);alloc(kf_,t*kh_*kd_,4);
     for(DeviceBuffer* b:{&z_,&features_,&features_norm_,&qatt_}) alloc(*b,t*vh_*vd_);
     for(DeviceBuffer* b:{&a_,&b_,&beta_}) alloc(*b,t*vh_);alloc(g_,t*vh_,4);
@@ -171,8 +181,8 @@ Json Model::allocation() const {
     uint64_t weights=0,states=0,work=0;
     for(const auto& w:weights_) weights+=w.second.bytes;
     for(const auto& s:state_) states+=s.conv.bytes+s.ssm.bytes+s.key.bytes+s.value.bytes;
-    for(const DeviceBuffer* b:{&x_,&xn_,&mixer_,&expert_out_,&shared_gate_,&shared_up_,&shared_mid_,&shared_out_,&shared_scale_,&router_,&ids_,&fp32_,&logits_,&raw_,&mixed_,&qf_,&kf_,&z_,&a_,&b_,&g_,&beta_,&features_,&features_norm_,&qatt_,&knew_,&katt_,&vnew_}) work+=b->bytes;
-    return {{"dense_bf16_weight_bytes",weights},{"persistent_state_capacity_bytes",states},
+    for(const DeviceBuffer* b:{&x_,&xn_,&mixer_,&expert_out_,&shared_gate_,&shared_up_,&shared_mid_,&shared_out_,&shared_scale_,&router_,&ids_,&fp32_,&logits_,&dense_input_,&raw_,&mixed_,&qf_,&kf_,&z_,&a_,&b_,&g_,&beta_,&features_,&features_norm_,&qatt_,&knew_,&katt_,&vnew_}) work+=b->bytes;
+    return {{"dense_bf16_weight_bytes",weights},{"persistent_state_capacity_bytes",states},{"gemm_compute_rows",max_tokens_},
             {"model_device_workspace_bytes",work},{"dense_gemm_workspace_bytes",32u<<20},
             {"expert_workspace",experts_.workspace()},{"max_logits_host_bf16_bytes",uint64_t(max_tokens_)*vocab*2},
             {"max_logits_host_float_bytes",uint64_t(max_tokens_)*vocab*4},{"store",store_.stats()}};
