@@ -24,6 +24,11 @@
 
 **Free, open source, and yours to run.** Use Strata on your desktop or with your favorite coding tools. No account needed.
 
+This branch includes an [experimental native Windows Clover BF16 CLI](docs/CLOVER_BF16_WINDOWS.md),
+enabled only with `STRATA_BUILD_CLOVER=ON`. Full-checkpoint short generation and native
+state replay work; full HF numerical agreement remains unfinished. The linked notes
+include measured results, failed comparisons and reproduction commands.
+
 ## Models
 
 We recommend **ISTA-DASLab first**, then **Unsloth** and other providers, where a compatible model fits.
