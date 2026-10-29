@@ -1,0 +1,822 @@
+{
+  "scope": "complete BF16 native Windows comparison; short controlled requests",
+  "cases": {
+    "clover-causal-ram8192-gpu8192": {
+      "revision": "4b0402b65e523d0183a14c431955438714cb16ff",
+      "config": {
+        "index": "C:\\workspace\\models\\bundles\\clover-bf16\\4b0402b6\\index.json",
+        "input_tokens": [
+          248045,
+          846,
+          198,
+          2427,
+          494,
+          220,
+          16,
+          310,
+          220,
+          16,
+          15,
+          13,
+          248046,
+          198,
+          248045,
+          74455,
+          198,
+          248068,
+          271,
+          248069,
+          271
+        ],
+        "mode": "causal",
+        "accept_rule": "exact",
+        "draft_width": 8,
+        "max_new_tokens": 4,
+        "context_tokens": 256,
+        "prefill_chunk": 32,
+        "ram_cache_mib": 8192,
+        "vram_cache_mib": 8192,
+        "staging_mib": 16,
+        "repeats": 1,
+        "audit_state": false,
+        "result_file": "C:\\workspace\\runs\\T-20261029-qwen36-bf16\\20261029T050654Z-public-runner-smoke\\clover-causal-ram8192-gpu8192\\result.json",
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Count from 1 to 10."
+          }
+        ],
+        "thinking": false,
+        "tokenizer_root": "C:\\workspace\\models\\inputs\\clover-35b-a3b-bf16\\4b0402b65e523d0183a14c431955438714cb16ff",
+        "tokenizer_class": "Qwen2Tokenizer"
+      },
+      "source": {
+        "source_commit": "fa45fdfd548f9332aa57f40d43f05c12d078ead5",
+        "source_dirty": [],
+        "native_executable": "C:\\workspace\\builds\\T-20261028-clover-bf16\\baseline\\strata-clover.exe",
+        "native_executable_sha256": "af9bce49e5e3b59715ba45458bc033c9aa3c290ec6b5a22b10e183b041b0ddf3"
+      },
+      "memory": {
+        "pid": 1532,
+        "interval_seconds": 0.1,
+        "samples": 60,
+        "native_peak_working_set_bytes": 9075499008,
+        "native_peak_commit_bytes": 23300288512,
+        "sampled_whole_device_used_peak_bytes": 15051436032,
+        "gpu_scope": "NVML whole device including desktop/other processes; sampled peak, not per-process GPU allocation",
+        "errors": []
+      },
+      "load": [
+        {
+          "allocation": {
+            "dense_bf16_weight_bytes": 4898192256,
+            "dense_gemm_workspace_bytes": 33554432,
+            "expert_workspace": {
+              "device_activation_bytes": 819456,
+              "gemm_accumulator": "FP32",
+              "gemm_compute_rows": 32,
+              "max_tokens": 32,
+              "strata_gemm_workspace_bytes": 33554432,
+              "weight_dtype": "BF16"
+            },
+            "gemm_compute_rows": 32,
+            "max_logits_host_bf16_bytes": 15892480,
+            "max_logits_host_float_bytes": 31784960,
+            "model_device_workspace_bytes": 51439808,
+            "persistent_state_capacity_bytes": 69632000,
+            "store": {
+              "aligned_file_completed_bytes": 4905050984,
+              "aligned_file_requested_bytes": 4905144320,
+              "cache_policy": "exclusive GPU/RAM LRU; GPU eviction demotes to RAM",
+              "d2h_bytes": 0,
+              "demotion_wait_ms": 0.0,
+              "gpu_hits": 0,
+              "gpu_misses": 0,
+              "gpu_staging_bytes": 0,
+              "h2d_bytes": 4898192256,
+              "host_copy_bytes": 0,
+              "host_copy_ms": 0.0,
+              "host_eviction_staging_bytes": 6291456,
+              "host_read_staging_bytes": 4198400,
+              "host_staging_bytes": 10489856,
+              "host_staging_wait_ms": 131.4902999999999,
+              "io_mode": "Strata DirectFile / unbuffered aligned reads; no mmap",
+              "logical_file_read_bytes": 4898192256,
+              "physical_ssd_bytes": null,
+              "physical_ssd_note": "Not measured at device level; file bytes are logical unbuffered completions",
+              "ram_cache_allocated_bytes": 8587837440,
+              "ram_cache_budget_bytes": 8589934592,
+              "ram_gpu_duplicate_experts": 0,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_staging_wait_ms": 0.0,
+              "read_calls": 1707,
+              "read_ms": 664.8506000000003,
+              "staging_budget_bytes": 16777216,
+              "vram_cache_allocated_bytes": 8587837440,
+              "vram_cache_budget_bytes": 8589934592
+            }
+          },
+          "memory": {
+            "available_commit_bytes": 36461645824,
+            "available_ram_bytes": 57154211840,
+            "cuda_free_bytes": 1951399936,
+            "cuda_total_bytes": 17094475776,
+            "peak_pagefile_bytes": 23104167936,
+            "peak_working_set_bytes": 338399232,
+            "private_commit_bytes": 23104167936,
+            "process_read_transfer_bytes": 4918381883,
+            "process_read_transfer_note": "Windows process I/O counter; not a device physical SSD byte counter",
+            "working_set_bytes": 338399232
+          },
+          "revision": "4b0402b65e523d0183a14c431955438714cb16ff",
+          "startup_ms": 1033.8066
+        }
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "output_ids": [
+            16,
+            11,
+            220,
+            17
+          ],
+          "output_count": 4,
+          "decoded_text": "1, 2",
+          "ttft_ms": 4304.2949,
+          "generation_elapsed_ms": 5046.9457,
+          "steady_token_per_second": 4.039581978670737,
+          "decode_wall_ms": 742.6508000000003,
+          "decode_phase_totals": {
+            "elapsed_ms": 739.6293000000001,
+            "unique_expert_evaluations": 960,
+            "logical_file_read_bytes": 1182793728,
+            "h2d_weight_bytes": 2906652672,
+            "d2h_weight_bytes": 2906652672,
+            "host_copy_bytes": 4630511616,
+            "host_copy_ms": 271.05259999999976,
+            "read_ms": 207.4023000000011,
+            "host_staging_wait_ms": 19.94999999999692,
+            "ram_staging_wait_ms": 26.020599999999966,
+            "demotion_wait_ms": 80.97850000000031,
+            "gpu_hits": 498,
+            "gpu_misses": 462,
+            "ram_hits": 274,
+            "ram_misses": 188,
+            "read_calls": 376
+          },
+          "phases": {
+            "prefill": {
+              "calls": 1,
+              "tokens": 21,
+              "elapsed_ms": 4303.1826,
+              "logical_file_read_bytes": 16018046976,
+              "h2d_weight_bytes": 16018046976,
+              "d2h_weight_bytes": 7430209536,
+              "h2d_control_bytes": 53844,
+              "read_calls": 5092,
+              "gpu_hits": 0,
+              "gpu_misses": 2546,
+              "ram_hits": 0,
+              "ram_misses": 2546,
+              "unique_expert_evaluations": 2546,
+              "host_copy_bytes": 7430209536,
+              "host_copy_ms": 694.3649000000008,
+              "demotion_wait_ms": 211.0407999999998,
+              "ram_staging_wait_ms": 0.0,
+              "read_ms": 2728.7456999999927,
+              "host_staging_wait_ms": 273.15379999998174
+            },
+            "causal_decode": {
+              "calls": 3,
+              "tokens": 3,
+              "elapsed_ms": 739.6293000000001,
+              "logical_file_read_bytes": 1182793728,
+              "h2d_weight_bytes": 2906652672,
+              "d2h_weight_bytes": 2906652672,
+              "h2d_control_bytes": 7692,
+              "read_calls": 376,
+              "gpu_hits": 498,
+              "gpu_misses": 462,
+              "ram_hits": 274,
+              "ram_misses": 188,
+              "unique_expert_evaluations": 960,
+              "host_copy_bytes": 4630511616,
+              "host_copy_ms": 271.05259999999976,
+              "demotion_wait_ms": 80.97850000000031,
+              "ram_staging_wait_ms": 26.020599999999966,
+              "read_ms": 207.4023000000011,
+              "host_staging_wait_ms": 19.94999999999692
+            }
+          },
+          "rounds": [
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 286.6529,
+              "round": 0
+            },
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 258.644,
+              "round": 1
+            },
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 196.8547,
+              "round": 2
+            }
+          ],
+          "decode_logical_file_read_bytes_per_new_token": 394264576.0,
+          "decode_h2d_weight_bytes_per_new_token": 968884224.0,
+          "decode_d2h_weight_bytes_per_new_token": 968884224.0,
+          "decode_host_copy_bytes_per_new_token": 1543503872.0
+        }
+      ],
+      "repeat_outputs_equal": true
+    },
+    "clover-selfspec-ram8192-gpu8192": {
+      "revision": "4b0402b65e523d0183a14c431955438714cb16ff",
+      "config": {
+        "index": "C:\\workspace\\models\\bundles\\clover-bf16\\4b0402b6\\index.json",
+        "input_tokens": [
+          248045,
+          846,
+          198,
+          2427,
+          494,
+          220,
+          16,
+          310,
+          220,
+          16,
+          15,
+          13,
+          248046,
+          198,
+          248045,
+          74455,
+          198,
+          248068,
+          271,
+          248069,
+          271
+        ],
+        "mode": "selfspec",
+        "accept_rule": "exact",
+        "draft_width": 8,
+        "max_new_tokens": 4,
+        "context_tokens": 256,
+        "prefill_chunk": 32,
+        "ram_cache_mib": 8192,
+        "vram_cache_mib": 8192,
+        "staging_mib": 16,
+        "repeats": 1,
+        "audit_state": false,
+        "result_file": "C:\\workspace\\runs\\T-20261029-qwen36-bf16\\20261029T050654Z-public-runner-smoke\\clover-selfspec-ram8192-gpu8192\\result.json",
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Count from 1 to 10."
+          }
+        ],
+        "thinking": false,
+        "tokenizer_root": "C:\\workspace\\models\\inputs\\clover-35b-a3b-bf16\\4b0402b65e523d0183a14c431955438714cb16ff",
+        "tokenizer_class": "Qwen2Tokenizer"
+      },
+      "source": {
+        "source_commit": "fa45fdfd548f9332aa57f40d43f05c12d078ead5",
+        "source_dirty": [],
+        "native_executable": "C:\\workspace\\builds\\T-20261028-clover-bf16\\baseline\\strata-clover.exe",
+        "native_executable_sha256": "af9bce49e5e3b59715ba45458bc033c9aa3c290ec6b5a22b10e183b041b0ddf3"
+      },
+      "memory": {
+        "pid": 6884,
+        "interval_seconds": 0.1,
+        "samples": 72,
+        "native_peak_working_set_bytes": 9087078400,
+        "native_peak_commit_bytes": 23292469248,
+        "sampled_whole_device_used_peak_bytes": 15051436032,
+        "gpu_scope": "NVML whole device including desktop/other processes; sampled peak, not per-process GPU allocation",
+        "errors": []
+      },
+      "load": [
+        {
+          "allocation": {
+            "dense_bf16_weight_bytes": 4898192256,
+            "dense_gemm_workspace_bytes": 33554432,
+            "expert_workspace": {
+              "device_activation_bytes": 819456,
+              "gemm_accumulator": "FP32",
+              "gemm_compute_rows": 32,
+              "max_tokens": 32,
+              "strata_gemm_workspace_bytes": 33554432,
+              "weight_dtype": "BF16"
+            },
+            "gemm_compute_rows": 32,
+            "max_logits_host_bf16_bytes": 15892480,
+            "max_logits_host_float_bytes": 31784960,
+            "model_device_workspace_bytes": 51439808,
+            "persistent_state_capacity_bytes": 69632000,
+            "store": {
+              "aligned_file_completed_bytes": 4905050984,
+              "aligned_file_requested_bytes": 4905144320,
+              "cache_policy": "exclusive GPU/RAM LRU; GPU eviction demotes to RAM",
+              "d2h_bytes": 0,
+              "demotion_wait_ms": 0.0,
+              "gpu_hits": 0,
+              "gpu_misses": 0,
+              "gpu_staging_bytes": 0,
+              "h2d_bytes": 4898192256,
+              "host_copy_bytes": 0,
+              "host_copy_ms": 0.0,
+              "host_eviction_staging_bytes": 6291456,
+              "host_read_staging_bytes": 4198400,
+              "host_staging_bytes": 10489856,
+              "host_staging_wait_ms": 137.99099999999984,
+              "io_mode": "Strata DirectFile / unbuffered aligned reads; no mmap",
+              "logical_file_read_bytes": 4898192256,
+              "physical_ssd_bytes": null,
+              "physical_ssd_note": "Not measured at device level; file bytes are logical unbuffered completions",
+              "ram_cache_allocated_bytes": 8587837440,
+              "ram_cache_budget_bytes": 8589934592,
+              "ram_gpu_duplicate_experts": 0,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_staging_wait_ms": 0.0,
+              "read_calls": 1707,
+              "read_ms": 718.846399999999,
+              "staging_budget_bytes": 16777216,
+              "vram_cache_allocated_bytes": 8587837440,
+              "vram_cache_budget_bytes": 8589934592
+            }
+          },
+          "memory": {
+            "available_commit_bytes": 36451704832,
+            "available_ram_bytes": 57116319744,
+            "cuda_free_bytes": 1951399936,
+            "cuda_total_bytes": 17094475776,
+            "peak_pagefile_bytes": 23096451072,
+            "peak_working_set_bytes": 338608128,
+            "private_commit_bytes": 23096451072,
+            "process_read_transfer_bytes": 4918381887,
+            "process_read_transfer_note": "Windows process I/O counter; not a device physical SSD byte counter",
+            "working_set_bytes": 338608128
+          },
+          "revision": "4b0402b65e523d0183a14c431955438714cb16ff",
+          "startup_ms": 1111.9173
+        }
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "output_ids": [
+            16,
+            11,
+            220,
+            17
+          ],
+          "output_count": 4,
+          "decoded_text": "1, 2",
+          "ttft_ms": 4295.7984,
+          "generation_elapsed_ms": 6360.004,
+          "steady_token_per_second": 1.4533433898236605,
+          "decode_wall_ms": 2064.2056000000002,
+          "decode_phase_totals": {
+            "elapsed_ms": 2054.8872,
+            "unique_expert_evaluations": 2598,
+            "logical_file_read_bytes": 4070572032,
+            "h2d_weight_bytes": 8650752000,
+            "d2h_weight_bytes": 8650752000,
+            "host_copy_bytes": 13230931968,
+            "host_copy_ms": 677.5593999999951,
+            "read_ms": 700.602300000005,
+            "host_staging_wait_ms": 69.43059999999014,
+            "ram_staging_wait_ms": 68.58650000000077,
+            "demotion_wait_ms": 244.71200000000036,
+            "gpu_hits": 1223,
+            "gpu_misses": 1375,
+            "ram_hits": 728,
+            "ram_misses": 647,
+            "read_calls": 1294
+          },
+          "phases": {
+            "prefill": {
+              "calls": 1,
+              "tokens": 21,
+              "elapsed_ms": 4294.6779,
+              "logical_file_read_bytes": 16018046976,
+              "h2d_weight_bytes": 16018046976,
+              "d2h_weight_bytes": 7430209536,
+              "h2d_control_bytes": 53844,
+              "read_calls": 5092,
+              "gpu_hits": 0,
+              "gpu_misses": 2546,
+              "ram_hits": 0,
+              "ram_misses": 2546,
+              "unique_expert_evaluations": 2546,
+              "host_copy_bytes": 7430209536,
+              "host_copy_ms": 691.8081999999997,
+              "demotion_wait_ms": 209.26640000000012,
+              "ram_staging_wait_ms": 0.0,
+              "read_ms": 2714.1090999999974,
+              "host_staging_wait_ms": 271.1682999999798
+            },
+            "preview": {
+              "calls": 1,
+              "tokens": 8,
+              "elapsed_ms": 739.0165,
+              "logical_file_read_bytes": 1585446912,
+              "h2d_weight_bytes": 3013607424,
+              "d2h_weight_bytes": 3013607424,
+              "h2d_control_bytes": 20512,
+              "read_calls": 504,
+              "gpu_hits": 102,
+              "gpu_misses": 479,
+              "ram_hits": 227,
+              "ram_misses": 252,
+              "unique_expert_evaluations": 581,
+              "host_copy_bytes": 4441767936,
+              "host_copy_ms": 262.5431999999988,
+              "demotion_wait_ms": 85.29750000000004,
+              "ram_staging_wait_ms": 21.37919999999995,
+              "read_ms": 271.29980000000114,
+              "host_staging_wait_ms": 26.9936999999955
+            },
+            "verify": {
+              "calls": 1,
+              "tokens": 8,
+              "elapsed_ms": 1241.8062,
+              "logical_file_read_bytes": 2485125120,
+              "h2d_weight_bytes": 5637144576,
+              "d2h_weight_bytes": 5637144576,
+              "h2d_control_bytes": 20512,
+              "read_calls": 790,
+              "gpu_hits": 333,
+              "gpu_misses": 896,
+              "ram_hits": 501,
+              "ram_misses": 395,
+              "unique_expert_evaluations": 1229,
+              "host_copy_bytes": 8789164032,
+              "host_copy_ms": 415.0161999999963,
+              "demotion_wait_ms": 159.41450000000032,
+              "ram_staging_wait_ms": 47.207300000000814,
+              "read_ms": 429.3025000000039,
+              "host_staging_wait_ms": 42.43689999999464
+            },
+            "commit_replay": {
+              "calls": 1,
+              "tokens": 4,
+              "elapsed_ms": 74.0645,
+              "logical_file_read_bytes": 0,
+              "h2d_weight_bytes": 0,
+              "d2h_weight_bytes": 0,
+              "h2d_control_bytes": 10256,
+              "read_calls": 0,
+              "gpu_hits": 788,
+              "gpu_misses": 0,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "unique_expert_evaluations": 788,
+              "host_copy_bytes": 0,
+              "host_copy_ms": 0.0,
+              "demotion_wait_ms": 0.0,
+              "ram_staging_wait_ms": 0.0,
+              "read_ms": 0.0,
+              "host_staging_wait_ms": 0.0
+            }
+          },
+          "rounds": [
+            {
+              "actual_output_tokens": 3,
+              "bonus_token": 220,
+              "commit_replay_ms": 74.0645,
+              "committed_input_tokens": 4,
+              "draft_width": 8,
+              "elapsed_ms": 2063.5996,
+              "emitted_bonus": false,
+              "emitted_drafts": 3,
+              "matched_drafts": 7,
+              "preview_ms": 739.0165,
+              "round": 0,
+              "verify_ms": 1241.8062
+            }
+          ],
+          "decode_logical_file_read_bytes_per_new_token": 1356857344.0,
+          "decode_h2d_weight_bytes_per_new_token": 2883584000.0,
+          "decode_d2h_weight_bytes_per_new_token": 2883584000.0,
+          "decode_host_copy_bytes_per_new_token": 4410310656.0
+        }
+      ],
+      "repeat_outputs_equal": true
+    },
+    "qwen-causal-ram8192-gpu8192": {
+      "revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+      "config": {
+        "index": "C:\\workspace\\models\\bundles\\qwen36-bf16\\995ad96e\\index.json",
+        "input_tokens": [
+          248045,
+          846,
+          198,
+          2427,
+          494,
+          220,
+          16,
+          310,
+          220,
+          16,
+          15,
+          13,
+          248046,
+          198,
+          248045,
+          74455,
+          198,
+          248068,
+          271,
+          248069,
+          271
+        ],
+        "mode": "causal",
+        "max_new_tokens": 4,
+        "context_tokens": 256,
+        "prefill_chunk": 32,
+        "ram_cache_mib": 8192,
+        "vram_cache_mib": 8192,
+        "staging_mib": 16,
+        "repeats": 1,
+        "result_file": "C:\\workspace\\runs\\T-20261029-qwen36-bf16\\20261029T050654Z-public-runner-smoke\\qwen-causal-ram8192-gpu8192\\result.json",
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "repetition_penalty": 1.0
+      },
+      "request": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "Count from 1 to 10."
+          }
+        ],
+        "thinking": false,
+        "tokenizer_root": "C:\\workspace\\models\\inputs\\qwen36-35b-a3b-bf16\\995ad96eacd98c81ed38be0c5b274b04031597b0",
+        "tokenizer_class": "Qwen3_5Tokenizer"
+      },
+      "source": {
+        "source_commit": "f685ca579de7259ccfe527befcd8c5336287a7ac",
+        "source_dirty": [
+          "?? docs/BF16_COMPARISON_WINDOWS.md",
+          "?? docs/bf16-comparison/",
+          "?? tools/qwen35/compare_bf16.py",
+          "?? tools/qwen35/summarize_bf16_widths.py"
+        ],
+        "native_executable": "C:\\workspace\\builds\\T-20261029-qwen36-bf16\\native\\strata-q36-bf16.exe",
+        "native_executable_sha256": "12dd9ab381e1edc0929b898c2db8f06d3280a1cb493bd46d55dee282785d44c2"
+      },
+      "memory": {
+        "pid": 7476,
+        "interval_seconds": 0.1,
+        "samples": 56,
+        "native_peak_working_set_bytes": 8262995968,
+        "native_peak_commit_bytes": 23305732096,
+        "sampled_whole_device_used_peak_bytes": 15049338880,
+        "gpu_scope": "NVML whole device including desktop/other processes; sampled peak, not per-process GPU allocation",
+        "errors": []
+      },
+      "load": [
+        {
+          "allocation": {
+            "dense_bf16_weight_bytes": 4896711936,
+            "dense_gemm_workspace_bytes": 33554432,
+            "expert_workspace": {
+              "device_activation_bytes": 819456,
+              "gemm_accumulator": "FP32",
+              "gemm_compute_rows": 32,
+              "max_tokens": 32,
+              "strata_gemm_workspace_bytes": 33554432,
+              "weight_dtype": "BF16"
+            },
+            "gemm_compute_rows": 32,
+            "max_logits_host_bf16_bytes": 15892480,
+            "max_logits_host_float_bytes": 31784960,
+            "model_device_workspace_bytes": 51439808,
+            "persistent_state_capacity_bytes": 69632000,
+            "store": {
+              "aligned_file_completed_bytes": 4903151856,
+              "aligned_file_requested_bytes": 4903190528,
+              "cache_policy": "exclusive GPU/RAM LRU; GPU eviction demotes to RAM",
+              "d2h_bytes": 0,
+              "demotion_wait_ms": 0.0,
+              "gpu_hits": 0,
+              "gpu_misses": 0,
+              "gpu_staging_bytes": 0,
+              "h2d_bytes": 4896711936,
+              "host_copy_bytes": 0,
+              "host_copy_ms": 0.0,
+              "host_eviction_staging_bytes": 6291456,
+              "host_read_staging_bytes": 4198400,
+              "host_staging_bytes": 10489856,
+              "host_staging_wait_ms": 129.32929999999988,
+              "io_mode": "Strata DirectFile / unbuffered aligned reads; no mmap",
+              "logical_file_read_bytes": 4896711936,
+              "physical_ssd_bytes": null,
+              "physical_ssd_note": "Not measured at device level; file bytes are logical unbuffered completions",
+              "ram_cache_allocated_bytes": 8587837440,
+              "ram_cache_budget_bytes": 8589934592,
+              "ram_gpu_duplicate_experts": 0,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_staging_wait_ms": 0.0,
+              "read_calls": 1587,
+              "read_ms": 663.8843000000005,
+              "staging_budget_bytes": 16777216,
+              "vram_cache_allocated_bytes": 8587837440,
+              "vram_cache_budget_bytes": 8589934592
+            }
+          },
+          "memory": {
+            "available_commit_bytes": 36468854784,
+            "available_ram_bytes": 57166860288,
+            "cuda_free_bytes": 1953497088,
+            "cuda_total_bytes": 17094475776,
+            "peak_pagefile_bytes": 23109808128,
+            "peak_working_set_bytes": 337526784,
+            "private_commit_bytes": 23109808128,
+            "process_read_transfer_bytes": 4916674526,
+            "process_read_transfer_note": "Windows process I/O counter; not a device physical SSD byte counter",
+            "working_set_bytes": 337526784
+          },
+          "revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+          "startup_ms": 1049.028
+        }
+      ],
+      "samples": [
+        {
+          "repeat": 0,
+          "output_ids": [
+            16,
+            11,
+            220,
+            17
+          ],
+          "output_count": 4,
+          "decoded_text": "1, 2",
+          "ttft_ms": 4039.8108,
+          "generation_elapsed_ms": 4748.4024,
+          "steady_token_per_second": 4.233750442426922,
+          "decode_wall_ms": 708.5915999999997,
+          "decode_phase_totals": {
+            "elapsed_ms": 706.1508,
+            "unique_expert_evaluations": 960,
+            "logical_file_read_bytes": 1145044992,
+            "h2d_weight_bytes": 2818572288,
+            "d2h_weight_bytes": 2818572288,
+            "host_copy_bytes": 4492099584,
+            "host_copy_ms": 257.7917000000016,
+            "read_ms": 198.7864999999997,
+            "host_staging_wait_ms": 19.099599999998418,
+            "ram_staging_wait_ms": 24.96019999999992,
+            "demotion_wait_ms": 78.08509999999993,
+            "gpu_hits": 512,
+            "gpu_misses": 448,
+            "ram_hits": 266,
+            "ram_misses": 182,
+            "read_calls": 364
+          },
+          "phases": {
+            "prefill": {
+              "calls": 1,
+              "tokens": 21,
+              "elapsed_ms": 4032.3084,
+              "logical_file_read_bytes": 15219032064,
+              "h2d_weight_bytes": 15219032064,
+              "d2h_weight_bytes": 6631194624,
+              "h2d_control_bytes": 53844,
+              "read_calls": 4838,
+              "gpu_hits": 0,
+              "gpu_misses": 2419,
+              "ram_hits": 0,
+              "ram_misses": 2419,
+              "unique_expert_evaluations": 2419,
+              "host_copy_bytes": 6631194624,
+              "host_copy_ms": 606.3166000000007,
+              "demotion_wait_ms": 187.02260000000015,
+              "ram_staging_wait_ms": 0.0,
+              "read_ms": 2604.084100000002,
+              "host_staging_wait_ms": 256.1011999999892
+            },
+            "causal_decode": {
+              "calls": 3,
+              "tokens": 3,
+              "elapsed_ms": 706.1508,
+              "logical_file_read_bytes": 1145044992,
+              "h2d_weight_bytes": 2818572288,
+              "d2h_weight_bytes": 2818572288,
+              "h2d_control_bytes": 7692,
+              "read_calls": 364,
+              "gpu_hits": 512,
+              "gpu_misses": 448,
+              "ram_hits": 266,
+              "ram_misses": 182,
+              "unique_expert_evaluations": 960,
+              "host_copy_bytes": 4492099584,
+              "host_copy_ms": 257.7917000000016,
+              "demotion_wait_ms": 78.08509999999993,
+              "ram_staging_wait_ms": 24.96019999999992,
+              "read_ms": 198.7864999999997,
+              "host_staging_wait_ms": 19.099599999998418
+            }
+          },
+          "rounds": [
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 251.9886,
+              "round": 0
+            },
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 240.7653,
+              "round": 1
+            },
+            {
+              "actual_output_tokens": 1,
+              "committed_input_tokens": 1,
+              "elapsed_ms": 215.2859,
+              "round": 2
+            }
+          ],
+          "decode_logical_file_read_bytes_per_new_token": 381681664.0,
+          "decode_h2d_weight_bytes_per_new_token": 939524096.0,
+          "decode_d2h_weight_bytes_per_new_token": 939524096.0,
+          "decode_host_copy_bytes_per_new_token": 1497366528.0
+        }
+      ],
+      "repeat_outputs_equal": true
+    }
+  },
+  "physical_ssd_bytes": null,
+  "notes": [
+    "First/warm denotes application-cache state, not measured cold SSD.",
+    "Steady rate excludes first token; decode bytes below also exclude prefill.",
+    "Host timing sections are separate from GPU elapsed time; do not add GPU copies a second time.",
+    "Model numerical validation limits must be read separately."
+  ],
+  "clover_causal_vs_exact_output_checks": [
+    {
+      "budget": "ram8192-gpu8192",
+      "same_ids": true
+    }
+  ],
+  "prompt_ids": [
+    248045,
+    846,
+    198,
+    2427,
+    494,
+    220,
+    16,
+    310,
+    220,
+    16,
+    15,
+    13,
+    248046,
+    198,
+    248045,
+    74455,
+    198,
+    248068,
+    271,
+    248069,
+    271
+  ],
+  "cache_budget_output_checks": [
+    {
+      "family": "qwen-causal",
+      "same_ids": true
+    },
+    {
+      "family": "clover-causal",
+      "same_ids": true
+    },
+    {
+      "family": "clover-selfspec",
+      "same_ids": true
+    }
+  ],
+  "purpose": "Full-checkpoint native smoke test of published comparison driver; not the 16/32-token benchmark."
+}

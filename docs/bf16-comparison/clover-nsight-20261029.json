@@ -1,0 +1,173 @@
+{
+  "note": "Intervals: each forward embedding kernel through final logits D2H. GPU intervals merged to avoid double counting. API waiting overlaps GPU work; do not add them. Profile includes collection overhead, not an unprofiled benchmark.",
+  "phases": [
+    {
+      "repeat": 0,
+      "phase": "prefill",
+      "measured_phase_ms_or_prefill_ttft": 4611.6968,
+      "gpu_window_ms": 4606.528298,
+      "gpu_kernel_ms": 52.496571,
+      "gpu_kernel_calls": 16840,
+      "gpu_memcpy_ms": 578.857362,
+      "gpu_busy_union_ms": 633.350285,
+      "gpu_idle_gap_ms": 3973.178013,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "preview",
+      "measured_phase_ms_or_prefill_ttft": 775.101,
+      "gpu_window_ms": 773.841328,
+      "gpu_kernel_ms": 18.072696,
+      "gpu_kernel_calls": 5020,
+      "gpu_memcpy_ms": 154.88586,
+      "gpu_busy_union_ms": 173.631796,
+      "gpu_idle_gap_ms": 600.209532,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "verify",
+      "measured_phase_ms_or_prefill_ttft": 1453.1718,
+      "gpu_window_ms": 1451.712347,
+      "gpu_kernel_ms": 27.282054,
+      "gpu_kernel_calls": 8908,
+      "gpu_memcpy_ms": 295.294641,
+      "gpu_busy_union_ms": 323.663717,
+      "gpu_idle_gap_ms": 1128.04863,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "commit_replay",
+      "measured_phase_ms_or_prefill_ttft": 1182.4858,
+      "gpu_window_ms": 1181.287505,
+      "gpu_kernel_ms": 26.30103,
+      "gpu_kernel_calls": 8938,
+      "gpu_memcpy_ms": 349.430171,
+      "gpu_busy_union_ms": 376.668558,
+      "gpu_idle_gap_ms": 804.618947,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "preview",
+      "measured_phase_ms_or_prefill_ttft": 860.0202,
+      "gpu_window_ms": 858.827246,
+      "gpu_kernel_ms": 19.117892,
+      "gpu_kernel_calls": 6244,
+      "gpu_memcpy_ms": 168.462535,
+      "gpu_busy_union_ms": 188.294911,
+      "gpu_idle_gap_ms": 670.532335,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "verify",
+      "measured_phase_ms_or_prefill_ttft": 1418.8624,
+      "gpu_window_ms": 1417.657377,
+      "gpu_kernel_ms": 26.864065,
+      "gpu_kernel_calls": 8938,
+      "gpu_memcpy_ms": 298.090686,
+      "gpu_busy_union_ms": 325.979148,
+      "gpu_idle_gap_ms": 1091.678229,
+      "runtime_api": []
+    },
+    {
+      "repeat": 0,
+      "phase": "commit_replay",
+      "measured_phase_ms_or_prefill_ttft": 1182.7911,
+      "gpu_window_ms": 1181.582823,
+      "gpu_kernel_ms": 26.421556,
+      "gpu_kernel_calls": 8968,
+      "gpu_memcpy_ms": 350.799158,
+      "gpu_busy_union_ms": 378.160023,
+      "gpu_idle_gap_ms": 803.4228,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "prefill",
+      "measured_phase_ms_or_prefill_ttft": 4037.9534,
+      "gpu_window_ms": 4032.828914,
+      "gpu_kernel_ms": 51.117821,
+      "gpu_kernel_calls": 16840,
+      "gpu_memcpy_ms": 767.15421,
+      "gpu_busy_union_ms": 820.406205,
+      "gpu_idle_gap_ms": 3212.422709,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "preview",
+      "measured_phase_ms_or_prefill_ttft": 756.5888,
+      "gpu_window_ms": 755.342821,
+      "gpu_kernel_ms": 16.537201,
+      "gpu_kernel_calls": 5020,
+      "gpu_memcpy_ms": 155.2985,
+      "gpu_busy_union_ms": 172.493185,
+      "gpu_idle_gap_ms": 582.849636,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "verify",
+      "measured_phase_ms_or_prefill_ttft": 1427.6365,
+      "gpu_window_ms": 1426.45633,
+      "gpu_kernel_ms": 27.315079,
+      "gpu_kernel_calls": 8908,
+      "gpu_memcpy_ms": 295.520289,
+      "gpu_busy_union_ms": 323.913368,
+      "gpu_idle_gap_ms": 1102.542962,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "commit_replay",
+      "measured_phase_ms_or_prefill_ttft": 1191.0894,
+      "gpu_window_ms": 1189.829794,
+      "gpu_kernel_ms": 26.338317,
+      "gpu_kernel_calls": 8938,
+      "gpu_memcpy_ms": 349.476864,
+      "gpu_busy_union_ms": 376.754621,
+      "gpu_idle_gap_ms": 813.075173,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "preview",
+      "measured_phase_ms_or_prefill_ttft": 835.5769,
+      "gpu_window_ms": 834.362459,
+      "gpu_kernel_ms": 19.432488,
+      "gpu_kernel_calls": 6244,
+      "gpu_memcpy_ms": 171.108768,
+      "gpu_busy_union_ms": 191.252668,
+      "gpu_idle_gap_ms": 643.109791,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "verify",
+      "measured_phase_ms_or_prefill_ttft": 1418.2167,
+      "gpu_window_ms": 1417.000268,
+      "gpu_kernel_ms": 26.758407,
+      "gpu_kernel_calls": 8938,
+      "gpu_memcpy_ms": 301.2534,
+      "gpu_busy_union_ms": 329.028465,
+      "gpu_idle_gap_ms": 1087.971803,
+      "runtime_api": []
+    },
+    {
+      "repeat": 1,
+      "phase": "commit_replay",
+      "measured_phase_ms_or_prefill_ttft": 1199.5056,
+      "gpu_window_ms": 1198.281518,
+      "gpu_kernel_ms": 26.635125,
+      "gpu_kernel_calls": 8968,
+      "gpu_memcpy_ms": 351.523671,
+      "gpu_busy_union_ms": 379.100443,
+      "gpu_idle_gap_ms": 819.181075,
+      "runtime_api": []
+    }
+  ]
+}
