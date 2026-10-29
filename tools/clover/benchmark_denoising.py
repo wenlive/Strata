@@ -36,10 +36,14 @@ def summarize(root):
         assert samples and all(s['output_ids']==samples[0]['output_ids'] for s in samples),'Repeat output mismatch'
         report['cases'][case.name]={'revision':raw['revision'],'config':cfg,'request':json.loads((case/'request.json').read_text()),
             'source':json.loads((case/'source-provenance.json').read_text()),'load':b['load'],
-            'sampled_memory':b.get('sampled_process_and_device_memory'),'samples':samples}
+            'sampled_memory':b.get('sampled_process_and_device_memory'),'samples':samples,
+            'native_phase_records':[json.loads(line[6:]) for line in (case/'native.log').read_text(encoding='utf-8').splitlines() if line.startswith('PHASE ')]}
         s=samples[-1];rounds=s['rounds'];steps=[r['denoise_steps'] for r in rounds if 'denoise_steps' in r]
-        rows.append(f"| {case.name} | {s['output_count']} | {s['ttft_ms']/1000:.3f} | {s['end_to_end_token_per_second']:.3f} | {s['post_prefill_token_per_second']:.3f} | {','.join(map(str,steps)) or '-'} | {s['post_prefill_totals']['logical_file_read_bytes']/2**30:.3f} |")
+        rate=f"{s['post_prefill_token_per_second']:.3f}" if s['post_prefill_token_per_second'] is not None else '-'
+        rows.append(f"| {case.name} | {s['output_count']} | {s['ttft_ms']/1000:.3f} | {s['end_to_end_token_per_second']:.3f} | {rate} | {','.join(map(str,steps)) or '-'} | {s['post_prefill_totals']['logical_file_read_bytes']/2**30:.3f} |")
     assert report['cases'],'No completed benchmark cases'
+    first=next(iter(report['cases'].values()))['samples']
+    report['same_output_ids_across_modes']={name:[x['output_ids']==y['output_ids'] for x,y in zip(c['samples'],first)] for name,c in report['cases'].items()}
     if 'clover-causal' in report['cases'] and 'clover-selfspec8' in report['cases']:
         report['causal_vs_selfspec_exact_same_ids']=all(x['output_ids']==y['output_ids'] for x,y in zip(report['cases']['clover-causal']['samples'],report['cases']['clover-selfspec8']['samples']))
         assert report['causal_vs_selfspec_exact_same_ids']

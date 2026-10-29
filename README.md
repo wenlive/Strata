@@ -28,6 +28,8 @@ This branch includes an [experimental native Windows Clover BF16 CLI](docs/CLOVE
 enabled only with `STRATA_BUILD_CLOVER=ON`. Full-checkpoint short generation and native
 state replay work; full HF numerical agreement remains unfinished. The linked notes
 include measured results, failed comparisons and reproduction commands.
+The [block-denoising mode and measurements](docs/CLOVER_BLOCK_DENOISING_WINDOWS.md)
+are separate from causal and self-speculative decoding.
 
 ## Models
 

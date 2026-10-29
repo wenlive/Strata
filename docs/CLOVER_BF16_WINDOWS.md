@@ -138,6 +138,9 @@ Native invocation is `strata-clover --config RUN.json`. Example:
 ```
 
 `mode=causal` generates causally; `mode=forward` only commits input tokens.
+`mode=denoise` implements independent LowConfidence block generation; its
+`denoise_block_size`/`denoise_threshold` keys and measurements are in the
+[block-denoising notes](CLOVER_BLOCK_DENOISING_WINDOWS.md).
 `prefill_chunk` is 1..32. Context capacity is at most 8192, but only short
 contexts have been validated. Draft widths are 2/4/8/16/32; checkpoint block
 size stays 32. `dump_final_state` and `trace_directory` must be new directories;
@@ -175,9 +178,13 @@ It adds 256 KiB dense input workspace.
 
 ## Preview and generation semantics
 
-HF `generate()` iteratively denoises the whole block, including positions
-already determined. That algorithm is not implemented here. This CLI follows
-SGLang: a full-model parallel preview, causal verify, exact contiguous-prefix
+`mode=denoise` follows HF `generate()`: it iteratively denoises the whole
+block, including positions already determined, with a strict confidence
+threshold and highest-confidence fallback. It resolves the full canvas
+before EOS/length truncation and causally commits only when continuing.
+There is no causal verification or speculative acceptance in that mode.
+
+`mode=selfspec` follows SGLang: a full-model parallel preview, causal verify, exact contiguous-prefix
 acceptance and boundary bonus. There is no additional small draft model,
 threshold acceptance or lightweight MTP substitute.
 Full attention uses committed causal history and bidirectional preview blocks.
@@ -216,6 +223,11 @@ Full-model failures are not hidden by widening tolerances.
 - Complete model, exclusive RAM 2 GiB / GPU 6 GiB: `Say hello briefly.` produced
   `Hello!` and EOS. All 80 final KV/conv/SSM tensors matched independent one-token
   causal replay with RAM 0 / GPU 1 GiB byte-for-byte.
+- LowConfidence denoising: 50 controller cases and four rejected inputs;
+  complete-model EOS, truncation, multi-block and threshold0/1 audits passed.
+  Four independent replays matched320 state files by SHA256, including a
+  complete32-token causal commit. Actual default-threshold8/16/32 performance
+  and numerical limits are in the separate block-denoising report.
 - Full HF math-SDPA causal comparison on a 16-token prompt: **failed** the 0.004
   layer-output relative RMS bound. Logits max/mean absolute error 8.75/0.9963324,
   relative RMS 0.1486412. Final-position argmax matched (9419). First difference:
@@ -230,7 +242,7 @@ Full-model failures are not hidden by widening tolerances.
 
 An earlier variable-GEMM state failure (76/80 tensors) was fixed; its logs are
 preserved. Full cross-engine numerical agreement, long-context validation,
-stochastic sampling and HF block denoising remain unfinished or unsupported.
+and stochastic sampling remain unfinished or unsupported.
 
 Reproduce using new output directories:
 
