@@ -3,6 +3,7 @@
 
 namespace strata::qwen36_bf16::ops {
 void cast(const float* in,BF* out,int count,cudaStream_t stream);
+void router_weights(const BF* logits,const int* ids,const int* allowed,float* weights,int rows,cudaStream_t stream);
 void residual(const BF* a,const BF* b,BF* out,int count,cudaStream_t stream);
 void norm(const BF* in,const BF* weight,const BF* gate,BF* out,int rows,int width,float eps,bool zero_centered,cudaStream_t stream);
 void swiglu(const BF* gate,const BF* up,BF* out,int count,cudaStream_t stream);

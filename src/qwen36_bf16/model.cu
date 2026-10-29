@@ -15,7 +15,7 @@ void Model::linear(const std::string& name,const BF* x,BF* y,int t) {
     const auto& shape=store_.index.at("tensors").at(name).at("shape");
     require(shape.size()==2,"Linear weight is not a matrix: "+name);
     int n=shape.at(0),k=shape.at(1);
-    require(size_t(max_tokens_)*n*4<=fp32_.bytes && size_t(max_tokens_)*k*2<=dense_input_.bytes,"Dense GEMM workspace overflow");
+    require(size_t(max_tokens_)*k*2<=dense_input_.bytes,"Dense GEMM workspace overflow");
     // Keep cuBLAS's row geometry fixed across prefill/verify/replay/decode.
     // BF16 rounding at router ties must not depend on a speculative batch's
     // acceptance length. Padding is never passed to attention, routing or state.
@@ -25,8 +25,7 @@ void Model::linear(const std::string& name,const BF* x,BF* y,int t) {
         Q36_CUDA(cudaMemsetAsync(dense_input_.as<BF>()+size_t(t)*k,0,size_t(max_tokens_-t)*k*2,stream_));
         input=dense_input_.as<BF>();
     }
-    dense_.bf16(reinterpret_cast<const uint16_t*>(input),reinterpret_cast<const uint16_t*>(weight(name)),fp32_.as<float>(),max_tokens_,n,k);
-    ops::cast(fp32_.as<float>(),y,t*n,stream_);
+    dense_.run(input,weight(name),y,max_tokens_,n,k);
 }
 Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,bool layer_test)
     :store_(source),layer_test_(layer_test),context_(context),max_tokens_(max_tokens),stream_(stream),experts_(source,max_tokens,stream) {
@@ -49,13 +48,14 @@ Model::Model(ExpertStore& source,int context,int max_tokens,cudaStream_t stream,
     require(dense_bytes+state_bytes+(512ull<<20)+(1024ull<<20)<free,"Insufficient VRAM for complete dense BF16 weights, states, workspaces and 1 GiB headroom; reduce expert VRAM cache/context");
     for(const auto& item:source.index.at("tensors").items()) if(item.key().find(".experts.")==std::string::npos)
         weights_.emplace(item.key(),source.load_tensor(item.key()));
-    std::string error;require(dense_.init(stream,0,error),error);
+    std::string error;require(dense_.init(stream,error),error);
     auto alloc=[&](DeviceBuffer& b,uint64_t elements,int bytes=2){b.allocate(size_t(elements)*bytes);};
     const uint64_t t=uint64_t(max_tokens);
     for(DeviceBuffer* b:{&x_,&xn_,&mixer_,&expert_out_,&shared_out_}) alloc(*b,t*h_);
     for(DeviceBuffer* b:{&shared_gate_,&shared_up_,&shared_mid_}) alloc(*b,t*sf_);
     alloc(shared_scale_,t);alloc(router_,t*store_.experts);alloc(ids_,t,4);
-    alloc(fp32_,t*std::max({vocab,ch_,2*nh_*hd_}),4);alloc(logits_,t*vocab);
+    alloc(route_ids_,t*top_k_,4);alloc(route_allowed_,store_.experts,4);alloc(route_weights_,t*top_k_,4);
+    alloc(logits_,t*vocab);
     alloc(dense_input_,t*std::max({h_,vh_*vd_,nh_*hd_,sf_}));
     alloc(raw_,t*ch_);alloc(mixed_,t*ch_);alloc(qf_,t*kh_*kd_,4);alloc(kf_,t*kh_*kd_,4);
     for(DeviceBuffer* b:{&z_,&features_,&features_norm_,&qatt_}) alloc(*b,t*vh_*vd_);
@@ -143,7 +143,12 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
         Q36_CUDA(cudaStreamSynchronize(stream_));
         std::vector<float> router_float(router_bf.size());for(size_t i=0;i<router_bf.size();++i) router_float[i]=__bfloat162float(router_bf[i]);
         auto routes=route(router_float,t,store_.experts,top_k_,false,1.0f);
-        for(float& w:routes.weights) w=__bfloat162float(__float2bfloat16_rn(w));
+        std::vector<int> allowed(size_t(store_.experts),1);
+        Q36_CUDA(cudaMemcpyAsync(route_ids_.p,routes.ids.data(),routes.ids.size()*sizeof(int),cudaMemcpyHostToDevice,stream_));
+        Q36_CUDA(cudaMemcpyAsync(route_allowed_.p,allowed.data(),allowed.size()*sizeof(int),cudaMemcpyHostToDevice,stream_));
+        ops::router_weights(router_.as<BF>(),route_ids_.as<int>(),route_allowed_.as<int>(),route_weights_.as<float>(),t,stream_);
+        Q36_CUDA(cudaMemcpyAsync(routes.weights.data(),route_weights_.p,routes.weights.size()*sizeof(float),cudaMemcpyDeviceToHost,stream_));
+        Q36_CUDA(cudaStreamSynchronize(stream_));
         trace(trace_pre+"router.bf16",router_.p,size_t(t)*store_.experts*2);
         if(!trace_root_.empty()) {std::ofstream out(trace_root_/(trace_pre+"routes.json"));out<<Json{{"ids",routes.ids},{"weights",routes.weights},{"coreset",routes.coreset}}.dump(2)<<'\n';}
         std::set<int> used(routes.ids.begin(),routes.ids.end());uniques.push_back(used.size());coresets.push_back(routes.coreset.size());
@@ -174,7 +179,7 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
     ForwardResult result;result.logits.resize(logits_bf.size());
     for(size_t i=0;i<logits_bf.size();++i) result.logits[i]=__bfloat162float(logits_bf[i]);
     const int prefix_before=prefix;if(commit) prefix+=t;
-    const uint64_t control_h2d=uint64_t(t)*4+uint64_t(store_.layers)*t*top_k_*8;
+    const uint64_t control_h2d=uint64_t(t)*4+uint64_t(store_.layers)*(t*top_k_*12+store_.experts*4);
     result.measurement={{"phase",phase},{"input_tokens",t},{"preview",preview},{"commit",commit},
         {"prefix_before",prefix_before},{"prefix_after",prefix},{"elapsed_ms",milliseconds(start)},
         {"experts_unique_per_layer",uniques},{"coreset_size_per_layer",coresets},
@@ -186,8 +191,8 @@ Json Model::allocation() const {
     uint64_t weights=0,states=0,work=0;
     for(const auto& w:weights_) weights+=w.second.bytes;
     for(const auto& s:state_) states+=s.conv.bytes+s.ssm.bytes+s.key.bytes+s.value.bytes;
-    for(const DeviceBuffer* b:{&x_,&xn_,&mixer_,&expert_out_,&shared_gate_,&shared_up_,&shared_mid_,&shared_out_,&shared_scale_,&router_,&ids_,&fp32_,&logits_,&dense_input_,&raw_,&mixed_,&qf_,&kf_,&z_,&a_,&b_,&g_,&beta_,&features_,&features_norm_,&qatt_,&knew_,&katt_,&vnew_}) work+=b->bytes;
-    return {{"dense_bf16_weight_bytes",weights},{"persistent_state_capacity_bytes",states},{"gemm_compute_rows",max_tokens_},
+    for(const DeviceBuffer* b:{&x_,&xn_,&mixer_,&expert_out_,&shared_gate_,&shared_up_,&shared_mid_,&shared_out_,&shared_scale_,&router_,&ids_,&logits_,&dense_input_,&raw_,&mixed_,&qf_,&kf_,&z_,&a_,&b_,&g_,&beta_,&features_,&features_norm_,&qatt_,&knew_,&katt_,&vnew_,&route_ids_,&route_allowed_,&route_weights_}) work+=b->bytes;
+    return {{"dense_gemm_output","BF16; FP32 accumulation; reduced-precision reduction disabled"},{"dense_bf16_weight_bytes",weights},{"persistent_state_capacity_bytes",states},{"gemm_compute_rows",max_tokens_},
             {"model_device_workspace_bytes",work},{"dense_gemm_workspace_bytes",32u<<20},
             {"expert_workspace",experts_.workspace()},{"max_logits_host_bf16_bytes",uint64_t(max_tokens_)*vocab*2},
             {"max_logits_host_float_bytes",uint64_t(max_tokens_)*vocab*4},{"store",store_.stats()}};

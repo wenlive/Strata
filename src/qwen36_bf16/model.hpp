@@ -2,6 +2,7 @@
 #include "expert.hpp"
 #include "kernels.hpp"
 #include "router.hpp"
+#include "bf16_linear.hpp"
 
 namespace strata::qwen36_bf16 {
 struct ForwardResult {std::vector<float> logits;Json measurement;};
@@ -25,9 +26,10 @@ private:
     std::map<std::string,DeviceBuffer> weights_;
     std::vector<State> state_;
     std::filesystem::path trace_root_;
-    prefill::Gemm dense_;
+    Bf16Linear dense_;
     ExpertExecutor experts_;
-    DeviceBuffer x_,xn_,mixer_,expert_out_,shared_gate_,shared_up_,shared_mid_,shared_out_,shared_scale_,router_,ids_,fp32_,logits_,dense_input_;
+    DeviceBuffer x_,xn_,mixer_,expert_out_,shared_gate_,shared_up_,shared_mid_,shared_out_,shared_scale_,router_,ids_,logits_,dense_input_;
+    DeviceBuffer route_ids_,route_allowed_,route_weights_;
     DeviceBuffer raw_,mixed_,qf_,kf_,z_,a_,b_,g_,beta_,features_,features_norm_,qatt_,knew_,katt_,vnew_;
     const BF* weight(const std::string& name) const;
     void linear(const std::string& name,const BF* x,BF* y,int tokens);
