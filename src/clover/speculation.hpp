@@ -24,13 +24,14 @@ struct ExactDecision {
 // logit at j verifies candidate j+1. The newly sampled boundary bonus is output
 // once and remains uncommitted. An EOS/length-truncated accepted prefix is the
 // only prefix replayed; no rejected or unreturned draft is persisted.
-inline ExactDecision decide_exact(const std::vector<int>& candidates,const std::vector<float>& logits,
-                                  int vocab,int remaining,const std::set<int>& eos) {
-    require(candidates.size()>=2&&remaining>0&&logits.size()==candidates.size()*size_t(vocab),"Invalid exact decision shape");
+// argmax[j] is the greedy token of verify row j (penalty-adjusted).
+inline ExactDecision decide_exact_ids(const std::vector<int>& candidates,const std::vector<int>& argmax,
+                                      int remaining,const std::set<int>& eos) {
+    require(candidates.size()>=2&&remaining>0&&argmax.size()==candidates.size(),"Invalid exact decision shape");
     ExactDecision result;
     const int width=int(candidates.size());
-    while(result.matched_drafts<width-1&&candidates[size_t(result.matched_drafts+1)]==greedy_argmax(logits,result.matched_drafts,vocab)) ++result.matched_drafts;
-    result.bonus=greedy_argmax(logits,result.matched_drafts,vocab);
+    while(result.matched_drafts<width-1&&candidates[size_t(result.matched_drafts+1)]==argmax[size_t(result.matched_drafts)]) ++result.matched_drafts;
+    result.bonus=argmax[size_t(result.matched_drafts)];
     for(int pos=0;pos<=result.matched_drafts&&int(result.output.size())<remaining;++pos) {
         const int token=pos<result.matched_drafts?candidates[size_t(pos+1)]:result.bonus;
         result.output.push_back(token);
@@ -39,5 +40,12 @@ inline ExactDecision decide_exact(const std::vector<int>& candidates,const std::
     }
     result.commit_inputs.assign(candidates.begin(),candidates.begin()+1+result.emitted_drafts);
     result.pending=result.emitted_bonus?result.bonus:-1;return result;
+}
+inline ExactDecision decide_exact(const std::vector<int>& candidates,const std::vector<float>& logits,
+                                  int vocab,int remaining,const std::set<int>& eos) {
+    require(candidates.size()>=2&&remaining>0&&logits.size()==candidates.size()*size_t(vocab),"Invalid exact decision shape");
+    std::vector<int> argmax(candidates.size());
+    for(size_t j=0;j<candidates.size();++j) argmax[j]=greedy_argmax(logits,int(j),vocab);
+    return decide_exact_ids(candidates,argmax,remaining,eos);
 }
 }

@@ -113,10 +113,34 @@ ExpertStore::ExpertStore(const std::filesystem::path& path,uint64_t ram_budget,
     CLOVER_CUDA(cudaEventRecord(scratch_done_,stream_));
     CLOVER_CUDA(cudaEventCreateWithFlags(&stage_done_,cudaEventDisableTiming));
     CLOVER_CUDA(cudaEventRecord(stage_done_,stream_));
+    resident_=gpu_slots==uint64_t(layers)*experts && !expert_test;
+    if(resident_) {preload();return;}
     for(auto& s:gpu_slots_) {
         CLOVER_CUDA(cudaEventCreateWithFlags(&s.done,cudaEventDisableTiming));
         CLOVER_CUDA(cudaEventRecord(s.done,stream_));
     }
+}
+// Slot k holds expert key k for the process lifetime: nothing is evicted, so
+// no per-slot events, LRU ages or RAM tier are needed after this one pass.
+void ExpertStore::preload() {
+    const auto start=Clock::now();
+    for(int key=0;key<layers*experts;++key) {
+        const auto& ex=index.at("experts").at(size_t(key));
+        auto* target=gpu_.as<uint8_t>()+uint64_t(key)*blob_bytes;uint64_t base=0;
+        for(const char* part:{"gate_up","down"}) {
+            const auto& sl=ex.at(part);const uint64_t bytes=sl.at("bytes");
+            for(uint64_t at=0;at<bytes;) {
+                const uint64_t n=std::min<uint64_t>(bytes-at,scratch_bytes_-4096);
+                const auto* source=direct_slice(sl,at,n);
+                CLOVER_CUDA(cudaMemcpyAsync(target+base+at,source,size_t(n),cudaMemcpyHostToDevice,stream_));
+                CLOVER_CUDA(cudaEventRecord(scratch_done_,stream_));h2d_bytes_+=n;at+=n;
+            }
+            base+=bytes;
+        }
+        gpu_slots_[size_t(key)].key=key;
+    }
+    CLOVER_CUDA(cudaStreamSynchronize(stream_));
+    preload_ms_=milliseconds(start);
 }
 ExpertStore::~ExpertStore() {
     cudaStreamSynchronize(stream_);
@@ -169,6 +193,7 @@ const BF* ExpertStore::acquire(int layer,int expert) {
     require(active_key_<0,"Previous expert must be marked used before acquiring another");
     require(layer>=0&&layer<layers&&expert>=0&&expert<experts,"Expert id out of range");
     const int key=layer*experts+expert;
+    if(resident_) {++gpu_hit_;active_key_=key;active_slot_=key;return gpu_.as<BF>()+uint64_t(key)*blob_bytes/2;}
     int gs=find(gpu_slots_,key);
     if(gs>=0) {
         ++gpu_hit_;gpu_slots_[size_t(gs)].age=++age_;
@@ -230,6 +255,7 @@ const BF* ExpertStore::acquire(int layer,int expert) {
 }
 void ExpertStore::used(int layer,int expert) {
     require(active_key_==layer*experts+expert,"Expert lifetime mismatch: used after another acquire");
+    if(resident_) {active_key_=-1;return;}
     CLOVER_CUDA(cudaEventRecord(active_slot_>=0?gpu_slots_[size_t(active_slot_)].done:stage_done_,stream_));
     active_key_=-1;
 }
@@ -267,7 +293,7 @@ Json ExpertStore::stats() const {
             {"vram_cache_budget_bytes",vram_budget_},{"vram_cache_allocated_bytes",gpu_.bytes},
             {"staging_budget_bytes",staging_budget_},{"host_staging_bytes",scratch_bytes_+eviction_bytes_},
             {"host_read_staging_bytes",scratch_bytes_},{"host_eviction_staging_bytes",eviction_bytes_},{"gpu_staging_bytes",gpu_stage_.bytes},
-            {"cache_policy","exclusive GPU/RAM LRU; GPU eviction demotes to RAM"},{"ram_gpu_duplicate_experts",duplicates},
+            {"cache_policy",resident_?"resident: every routed expert preloaded in VRAM":"exclusive GPU/RAM LRU; GPU eviction demotes to RAM"},{"preload_ms",preload_ms_},{"ram_gpu_duplicate_experts",duplicates},
             {"io_mode","Strata DirectFile / unbuffered aligned reads; no mmap"},
             {"physical_ssd_bytes",nullptr},{"physical_ssd_note","Not measured at device level; file bytes are logical unbuffered completions"}};
 }

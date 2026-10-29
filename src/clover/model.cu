@@ -75,6 +75,63 @@ void Model::reset() {
         if(b->bytes) CLOVER_CUDA(cudaMemsetAsync(b->p,0,b->bytes,stream_));
     CLOVER_CUDA(cudaStreamSynchronize(stream_));
 }
+
+namespace {
+__global__ void logits_to_float(const BF* in,float* out,size_t n) {
+    const size_t i=size_t(blockIdx.x)*blockDim.x+threadIdx.x;if(i<n) out[i]=__bfloat162float(in[i]);
+}
+__global__ void apply_edits(float* x,int vocab,const LogitEdit* edits,int n,float presence,float frequency,float repetition) {
+    const int i=int(blockIdx.x*blockDim.x+threadIdx.x);if(i>=n) return;
+    const LogitEdit e=edits[i];float& v=x[size_t(e.row)*vocab+e.token];float value=v;
+    if(e.to_inf) value=-INFINITY;
+    if(frequency!=0.0f) value-=float(e.count)*frequency;
+    if(presence!=0.0f&&e.count) value-=presence;
+    if(repetition!=1.0f&&e.count) value=value<0?value*repetition:value/repetition;
+    if(e.length_bias!=0.0f) value+=e.length_bias;
+    if(e.think_bias!=0.0f) value+=e.think_bias;
+    v=value;
+}
+// One block per row: greedy argmax (lowest id wins ties, like greedy_argmax)
+// and confidence = 1 / sum(exp(x - max)), the T=1 softmax probability.
+__global__ void row_pick(const float* x,int vocab,RowPick* out) {
+    const float* row=x+size_t(blockIdx.x)*vocab;
+    __shared__ float best_v[1024];__shared__ int best_i[1024];__shared__ float sums[1024];
+    float bv=-INFINITY;int bi=0x7fffffff;
+    for(int v=threadIdx.x;v<vocab;v+=blockDim.x) {const float a=row[v];if(a>bv) {bv=a;bi=v;}}
+    best_v[threadIdx.x]=bv;best_i[threadIdx.x]=bi;__syncthreads();
+    for(int s=blockDim.x/2;s>0;s/=2) {
+        if(threadIdx.x<s) {
+            const float ov=best_v[threadIdx.x+s];const int oi=best_i[threadIdx.x+s];
+            if(ov>best_v[threadIdx.x]||(ov==best_v[threadIdx.x]&&oi<best_i[threadIdx.x])) {best_v[threadIdx.x]=ov;best_i[threadIdx.x]=oi;}
+        }
+        __syncthreads();
+    }
+    const float maximum=best_v[0];float sum=0;
+    for(int v=threadIdx.x;v<vocab;v+=blockDim.x) sum+=expf(row[v]-maximum);
+    sums[threadIdx.x]=sum;__syncthreads();
+    for(int s=blockDim.x/2;s>0;s/=2) {if(threadIdx.x<s) sums[threadIdx.x]+=sums[threadIdx.x+s];__syncthreads();}
+    if(threadIdx.x==0) {out[blockIdx.x].token=isfinite(maximum)?best_i[0]:-1;out[blockIdx.x].confidence=1.0f/sums[0];}
+}
+}
+std::vector<RowPick> Model::pick(const std::vector<LogitEdit>& edits,int first,int rows,float presence,float frequency,float repetition) {
+    require(!host_logits&&first>=0&&rows>0&&first+rows<=last_rows_,"pick() needs device logits of the last forward");
+    const size_t n=size_t(rows)*vocab;
+    if(logits_f_.bytes<n*4) logits_f_=DeviceBuffer(size_t(max_tokens_)*vocab*4);
+    if(picks_d_.bytes<size_t(rows)*sizeof(RowPick)) picks_d_=DeviceBuffer(size_t(max_tokens_)*sizeof(RowPick));
+    logits_to_float<<<unsigned((n+255)/256),256,0,stream_>>>(logits_.as<BF>()+size_t(first)*vocab,logits_f_.as<float>(),n);
+    if(!edits.empty()) {
+        for(const auto& e:edits) require(e.row>=0&&e.row<rows&&e.token>=0&&e.token<vocab,"Logit edit out of range");
+        if(edits_d_.bytes<edits.size()*sizeof(LogitEdit)) edits_d_=DeviceBuffer(edits.size()*sizeof(LogitEdit)*2);
+        CLOVER_CUDA(cudaMemcpyAsync(edits_d_.p,edits.data(),edits.size()*sizeof(LogitEdit),cudaMemcpyHostToDevice,stream_));
+        apply_edits<<<unsigned((edits.size()+255)/256),256,0,stream_>>>(logits_f_.as<float>(),vocab,edits_d_.as<LogitEdit>(),int(edits.size()),presence,frequency,repetition);
+    }
+    row_pick<<<rows,1024,0,stream_>>>(logits_f_.as<float>(),vocab,picks_d_.as<RowPick>());
+    std::vector<RowPick> out(static_cast<size_t>(rows),RowPick{});
+    CLOVER_CUDA(cudaMemcpyAsync(out.data(),picks_d_.p,out.size()*sizeof(RowPick),cudaMemcpyDeviceToHost,stream_));
+    CLOVER_CUDA(cudaGetLastError());CLOVER_CUDA(cudaStreamSynchronize(stream_));
+    for(const auto& r:out) require(r.token>=0&&std::isfinite(r.confidence),"No finite token logit");
+    return out;
+}
 ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool commit,const std::string& phase) {
     const int t=int(tokens.size());require(t>0&&t<=max_tokens_&&prefix+t<=context_,"Forward exceeds batch/context budget");
     require(!preview||(!commit&&t<=block_size&&block_size%t==0),"Preview must be read-only and width must divide checkpoint block size");
@@ -169,11 +226,14 @@ ForwardResult Model::forward(const std::vector<int>& tokens,bool preview,bool co
     trace("final_norm.bf16",xn_.p,size_t(t)*h_*2);
     linear("lm_head.weight",xn_.as<BF>(),logits_.as<BF>(),t);
     trace("logits.bf16",logits_.p,size_t(t)*vocab*2);
-    std::vector<BF> logits_bf(size_t(t)*vocab);
-    CLOVER_CUDA(cudaMemcpyAsync(logits_bf.data(),logits_.p,logits_bf.size()*2,cudaMemcpyDeviceToHost,stream_));
-    CLOVER_CUDA(cudaGetLastError());CLOVER_CUDA(cudaStreamSynchronize(stream_));
-    ForwardResult result;result.logits.resize(logits_bf.size());
-    for(size_t i=0;i<logits_bf.size();++i) result.logits[i]=__bfloat162float(logits_bf[i]);
+    ForwardResult result;last_rows_=t;
+    if(host_logits) {
+        std::vector<BF> logits_bf(size_t(t)*vocab);
+        CLOVER_CUDA(cudaMemcpyAsync(logits_bf.data(),logits_.p,logits_bf.size()*2,cudaMemcpyDeviceToHost,stream_));
+        CLOVER_CUDA(cudaGetLastError());CLOVER_CUDA(cudaStreamSynchronize(stream_));
+        result.logits.resize(logits_bf.size());
+        for(size_t i=0;i<logits_bf.size();++i) result.logits[i]=__bfloat162float(logits_bf[i]);
+    } else {CLOVER_CUDA(cudaGetLastError());CLOVER_CUDA(cudaStreamSynchronize(stream_));}
     const int prefix_before=prefix;if(commit) prefix+=t;
     const uint64_t control_h2d=uint64_t(t)*4+uint64_t(store_.layers)*(t*top_k_*12+store_.experts*4);
     result.measurement={{"phase",phase},{"input_tokens",t},{"preview",preview},{"commit",commit},

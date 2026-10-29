@@ -58,8 +58,15 @@ int main(int argc,char** argv) {
             require(std::isfinite(denoise_threshold)&&denoise_threshold>=0&&denoise_threshold<=1,"Invalid denoising threshold");
             if(mode=="denoise") require(prompt.size()+uint64_t((limit+denoise_width-1)/denoise_width)*denoise_width<=uint64_t(context),"Prompt plus full denoising blocks exceeds context capacity");
             std::cout<<"LOAD "<<Json{{"startup_ms",milliseconds(startup)},{"revision",source.index.at("revision")},{"allocation",model.allocation()},{"memory",memory_snapshot()}}.dump()<<std::endl;
+            // STRATA_CLOVER_GPU_LOGITS=1: penalties, argmax and confidence run on the
+            // GPU; only per-row (token, confidence) pairs return to the host.
+            const char* gpu_env=std::getenv("STRATA_CLOVER_GPU_LOGITS");
+            const bool gpu_logits=gpu_env&&std::atoi(gpu_env)!=0;model.host_logits=!gpu_logits;
             for(int repeat=0;repeat<repeats;++repeat) {
                 model.reset();Penalties penalty(gen,cfg,model.vocab);
+                auto picks=[&](const std::vector<LogitEdit>& edits,int first,int rows) {
+                    return model.pick(edits,first,rows,penalty.presence,penalty.frequency,penalty.repetition);
+                };
                 size_t phase_id=0;
                 auto forward=[&](const std::vector<int>& input,bool preview,bool commit,const std::string& phase) {
                     if(cfg.contains("trace_directory")) model.trace_to(std::filesystem::path(cfg.at("trace_directory").get<std::string>())/("repeat"+std::to_string(repeat))/(std::to_string(phase_id++)+"-"+phase));
@@ -68,16 +75,20 @@ int main(int argc,char** argv) {
                 const bool audit=cfg.value("audit_state",false);double audit_ms=0;
                 std::vector<int> output,committed=prompt;Json rounds=Json::array();
                 const auto before=source.stats();const auto generation=Clock::now();ForwardResult prefill;
+                int last_chunk=0;
                 for(size_t at=0;at<prompt.size();) {
                     const size_t n=std::min<size_t>(size_t(prefill_chunk),prompt.size()-at);
-                    prefill=forward(std::vector<int>(prompt.begin()+std::ptrdiff_t(at),prompt.begin()+std::ptrdiff_t(at+n)),false,true,"prefill");at+=n;
+                    prefill=forward(std::vector<int>(prompt.begin()+std::ptrdiff_t(at),prompt.begin()+std::ptrdiff_t(at+n)),false,true,"prefill");at+=n;last_chunk=int(n);
                 }
                 const double prefill_wall_ms=milliseconds(generation);int first_chunk_tokens=0,output_chunks=0;
                 double ttft=0;int pending=-1;Clock::time_point first_token;
                 if(mode=="causal"||mode=="selfspec") {
+                    if(gpu_logits) pending=picks(penalty.edits(1,false,{},false),last_chunk-1,1)[0].token;
+                    else {
                     const int last=int(prefill.logits.size()/size_t(model.vocab))-1;
                     std::vector<float> initial(prefill.logits.begin()+size_t(last)*model.vocab,prefill.logits.begin()+size_t(last+1)*model.vocab);
                     penalty.apply(initial,1,model.vocab,false,{},false);pending=argmax(initial,0,model.vocab);
+                    }
                     output.push_back(pending);penalty.commit(pending);first_token=Clock::now();ttft=milliseconds(generation);
                     first_chunk_tokens=1;++output_chunks;
                 }
@@ -94,8 +105,22 @@ int main(int argc,char** argv) {
                             auto result=forward(block,true,false,"denoise_preview");previews_ms+=result.measurement.at("elapsed_ms").get<double>();
                             if(audit) {const auto start=Clock::now();require(clean==model.state_hash(),"Denoising preview polluted persistent state");audit_ms+=milliseconds(start);}
                             const auto selecting=Clock::now();const auto before_block=block;
+                            DenoiseDecision decision;
+                            if(gpu_logits) {
+                                const auto rows=picks(penalty.edits(denoise_width,true,{},true,true,block,mask),0,denoise_width);
+                                int fallback=-1;
+                                for(int row=0;row<denoise_width;++row) {
+                                    decision.prediction.push_back(rows[size_t(row)].token);decision.confidence.push_back(rows[size_t(row)].confidence);
+                                    if(!unresolved[size_t(row)]) continue;
+                                    if(fallback<0||rows[size_t(row)].confidence>rows[size_t(fallback)].confidence) fallback=row;
+                                    if(rows[size_t(row)].confidence>denoise_threshold) decision.transfer.push_back(row);
+                                }
+                                require(fallback>=0,"Denoising step has no pending positions");
+                                if(decision.transfer.empty()) decision.transfer.push_back(fallback);
+                            } else {
                             penalty.apply_denoise(result.logits,model.vocab,block,mask);
-                            const auto decision=decide_denoise(result.logits,unresolved,model.vocab,denoise_threshold);
+                            decision=decide_denoise(result.logits,unresolved,model.vocab,denoise_threshold);
+                            }
                             for(int position:decision.transfer) {require(unresolved[size_t(position)],"Resolved denoising position overwritten");block[size_t(position)]=decision.prediction[size_t(position)];unresolved[size_t(position)]=false;}
                             const double selecting_ms=milliseconds(selecting);selection_ms+=selecting_ms;
                             Json step={{"block",rounds.size()},{"iteration",iteration},{"input_block",before_block},{"predictions",decision.prediction},{"confidence",decision.confidence},
@@ -120,8 +145,9 @@ int main(int argc,char** argv) {
                     }
                     if(mode=="causal") {
                         auto result=forward({pending},false,true,"causal_decode");committed.push_back(pending);
-                        penalty.apply(result.logits,1,model.vocab,false,{});
-                        pending=argmax(result.logits,0,model.vocab);output.push_back(pending);penalty.commit(pending);
+                        if(gpu_logits) pending=picks(penalty.edits(1,false,{},true),0,1)[0].token;
+                        else {penalty.apply(result.logits,1,model.vocab,false,{});pending=argmax(result.logits,0,model.vocab);}
+                        output.push_back(pending);penalty.commit(pending);
                         ++output_chunks;
                         Json round={{"round",rounds.size()},{"actual_output_tokens",1},{"committed_input_tokens",1},{"elapsed_ms",milliseconds(round_started)}};
                         rounds.push_back(round);std::cout<<"ROUND "<<round.dump()<<std::endl;continue;
@@ -130,14 +156,22 @@ int main(int argc,char** argv) {
                     uint64_t clean=0;
                     if(audit) {auto start=Clock::now();clean=model.state_hash();audit_ms+=milliseconds(start);}
                     auto preview=forward(block,true,false,"preview");
-                    penalty.apply(preview.logits,width,model.vocab,true,block);
                     std::vector<int> candidates(size_t(width),0);candidates[0]=pending;
+                    if(gpu_logits) {
+                        const auto rows=picks(penalty.edits(width,true,block,true),0,width);
+                        for(int row=1;row<width;++row) candidates[size_t(row)]=rows[size_t(row)].token;
+                    } else {
+                    penalty.apply(preview.logits,width,model.vocab,true,block);
                     for(int row=1;row<width;++row) candidates[size_t(row)]=argmax(preview.logits,row,model.vocab);
+                    }
                     std::vector<float>().swap(preview.logits);
                     auto verify=forward(candidates,false,false,"verify");
-                    penalty.apply(verify.logits,width,model.vocab,false,candidates);
+                    std::vector<int> verify_ids;
+                    if(gpu_logits) {for(const auto& r:picks(penalty.edits(width,false,candidates,true),0,width)) verify_ids.push_back(r.token);}
+                    else {penalty.apply(verify.logits,width,model.vocab,false,candidates);
+                          for(int row=0;row<width;++row) verify_ids.push_back(argmax(verify.logits,row,model.vocab));}
                     if(audit) {auto start=Clock::now();require(clean==model.state_hash(),"Full-model preview/verify polluted persistent state");audit_ms+=milliseconds(start);}
-                    const auto decision=decide_exact(candidates,verify.logits,model.vocab,limit-int(output.size()),penalty.stops);
+                    const auto decision=decide_exact_ids(candidates,verify_ids,limit-int(output.size()),penalty.stops);
                     std::vector<float>().swap(verify.logits);
                     for(int token:decision.output) {output.push_back(token);penalty.commit(token);}
                     ++output_chunks;

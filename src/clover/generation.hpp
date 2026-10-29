@@ -1,5 +1,7 @@
 #pragma once
 #include "denoising.hpp"
+#include "model.hpp"
+#include <map>
 
 namespace strata::clover {
 struct Penalties {
@@ -20,6 +22,40 @@ struct Penalties {
         if(eos.is_array()) for(const auto& token:eos) stops.insert(token.get<int>());
         else stops.insert(eos.get<int>());
         for(int token:stops) require(token>=0&&token<vocab,"Invalid EOS id");
+    }
+    // Sparse GPU form of apply()/apply_denoise(): same conditions and order,
+    // one merged LogitEdit per touched (row, token).
+    std::vector<LogitEdit> edits(int rows,bool preview,const std::vector<int>& visible,bool custom,
+                                 bool denoise=false,const std::vector<int>& block={},int mask=-1) const {
+        std::map<std::pair<int,int>,LogitEdit> m;
+        auto at=[&](int row,int token)->LogitEdit& {auto& e=m[{row,token}];e.row=row;e.token=token;return e;};
+        if(denoise) for(int row=0;row<rows;++row) at(row,mask).to_inf=1;
+        if(frequency||presence||repetition!=1)
+            for(size_t token=0;token<counts.size();++token) if(counts[token])
+                for(int row=0;row<rows;++row) at(row,int(token)).count=counts[token];
+        if(denoise) {
+            const bool visible_close=std::find(block.begin(),block.end(),think_token)!=block.end();
+            for(int row=0;row<rows;++row) {
+                const int position=output_length+row+1;
+                if(length) for(int token:stops) at(row,token).length_bias=length*std::clamp(float(position-length_start)/float(length_window),0.0f,1.0f);
+                if(think&&!counts[size_t(think_token)]&&!visible_close)
+                    at(row,think_token).think_bias=think*std::clamp(float(position-think_start)/float(think_window),0.0f,1.0f);
+            }
+        } else if(custom) {
+            const int first=output_length+(preview?0:1);
+            if(length) for(int row=0;row<rows;++row) {
+                const float ramp=length*std::clamp(float(first+row-length_start)/float(length_window),0.0f,1.0f);
+                for(int token:stops) at(row,token).length_bias=ramp;
+            }
+            const bool close_visible=std::find(visible.begin(),visible.end(),think_token)!=visible.end();
+            if(think&&!counts[size_t(think_token)]&&(!preview||!close_visible)) {
+                const int row=std::max(int(preview),think_start+1-first);
+                if(row<rows) at(row,think_token).think_bias=think*std::min(float(first+row-think_start)/float(think_window),1.0f);
+            }
+        }
+        std::vector<LogitEdit> out;out.reserve(m.size());
+        for(const auto& kv:m) if(kv.second.to_inf||kv.second.count||kv.second.length_bias!=0||kv.second.think_bias!=0) out.push_back(kv.second);
+        return out;
     }
     void commit(int token) {++counts[size_t(token)];++output_length;}
     void apply(std::vector<float>& logits,int rows,int vocab,bool preview,const std::vector<int>& visible,bool custom=true) const {

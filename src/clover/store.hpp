@@ -21,6 +21,9 @@ public:
     DeviceBuffer load_tensor(const std::string& name);
     void read_bytes(const Json& slice,void* output,uint64_t bytes);
     Json stats() const;
+    // True when the VRAM budget holds every routed expert (e.g. DGX Spark unified
+    // memory): all experts are preloaded once and acquire() is a fixed lookup.
+    bool resident() const {return resident_;}
     Json index;
     int hidden=0,ff=0,layers=0,experts=0;
     uint64_t blob_bytes=0,gu_bytes=0;
@@ -37,6 +40,9 @@ private:
     uint64_t scratch_bytes_=0,eviction_bytes_=0;
     cudaEvent_t scratch_done_=nullptr,stage_done_=nullptr;
     int active_key_=-1,active_slot_=-1;
+    bool resident_=false;
+    double preload_ms_=0;
+    void preload();
     uint64_t age_=0,ram_budget_=0,vram_budget_=0,staging_budget_=0;
     uint64_t gpu_hit_=0,gpu_miss_=0,ram_hit_=0,ram_miss_=0;
     uint64_t logical_bytes_=0,aligned_requested_=0,aligned_completed_=0,read_calls_=0,h2d_bytes_=0,d2h_bytes_=0;
