@@ -292,3 +292,6 @@ Windows commit includes CUDA/WDDM allocations and is not the resident RAM
 expert cache. The measured 64 GiB DIMM capacity was probed, not assumed.
 The normal Strata path defaults to `STRATA_BUILD_CLOVER=OFF`. This branch adds
 no HTTP service, UI, multi-GPU, concurrency or CPU BF16 executor.
+
+Additional store timers now report host_copy_bytes/host_copy_ms (CPU weight memcpy), ram_staging_wait_ms, and demotion_wait_ms (D2H enqueue plus synchronization). These are host wall-clock sections; do not add GPU copy duration again. Historical logs omit unavailable new counters; they are not reported as measured zeros. Arithmetic and cache policy are unchanged. Follow-up measurements will use the new executable hash.
+

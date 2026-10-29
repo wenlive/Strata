@@ -41,6 +41,8 @@ private:
     uint64_t gpu_hit_=0,gpu_miss_=0,ram_hit_=0,ram_miss_=0;
     uint64_t logical_bytes_=0,aligned_requested_=0,aligned_completed_=0,read_calls_=0,h2d_bytes_=0,d2h_bytes_=0;
     double read_ms_=0,h2d_wait_ms_=0;
+    uint64_t host_copy_bytes_=0;
+    double host_copy_ms_=0,demotion_wait_ms_=0,ram_staging_wait_ms_=0;
     platform::DirectFile& file(const std::string& name);
     const uint8_t* direct_slice(const Json& slice,uint64_t at,uint64_t n);
     void copy_host(const uint8_t* host,BF* dst,uint64_t n);
