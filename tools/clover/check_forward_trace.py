@@ -21,16 +21,17 @@ def main():
     p.add_argument('--index',type=Path,required=True);p.add_argument('--config',type=Path,required=True)
     p.add_argument('--trace',type=Path,required=True);p.add_argument('--state',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--linear-geometry',choices=('hf','padded32-fp32'),default='hf',
-                   help='Diagnostic only: replace BF16 linear GEMMs with 32-row FP32-output GEMMs; default leaves HF operations unchanged')
+    p.add_argument('--linear-geometry',choices=('hf','padded32-fp32','padded32-bf16'),default='hf',
+                   help='Diagnostic only: pad linear GEMMs to 32 rows with FP32 or BF16 output; default leaves HF operations unchanged')
     p.add_argument('--isolate-each-layer',action='store_true',help='Also compare each layer using the identical native input')
+    p.add_argument('--native-router-diagnostic',action='store_true',help='Diagnostic only: feed saved native router logits into HF routing; cannot qualify an unmodified-reference pass')
     a=p.parse_args();a.output.mkdir(parents=True,exist_ok=False)
     index=json.loads(a.index.read_text());assert index['complete'] and index['scope']=='full-model'
     config=json.loads(a.config.read_text());ids=config['input_tokens'];assert 0<len(ids)<=32
     c=SimpleNamespace(**index['config']);root=Path(index['model_root']);ns=oracle_namespace(root/'modeling_clover_moe.py')
     torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False
-    if a.linear_geometry=='padded32-fp32':
+    if a.linear_geometry!='hf':
         original_linear=F.linear
 
         def padded_mm(x,weight):
@@ -40,6 +41,10 @@ def main():
 
         def diagnostic_linear(x,weight,bias=None):
             if x.is_cuda and x.dtype==weight.dtype==torch.bfloat16:
+                if a.linear_geometry=='padded32-bf16':
+                    flat=x.reshape(-1,x.shape[-1]);assert 0<flat.shape[0]<=32
+                    value=original_linear(F.pad(flat,(0,0,0,32-flat.shape[0])),weight,bias)
+                    return value[:flat.shape[0]].reshape(*x.shape[:-1],weight.shape[0])
                 result=padded_mm(x,weight).bfloat16()
                 return result if bias is None else result+bias
             return original_linear(x,weight,bias)
@@ -48,7 +53,8 @@ def main():
         ns['linear_fp32_output']=padded_mm
     t=len(ids);report={'kind':'full-checkpoint-causal-prefill-layer-streamed-oracle','revision':index['revision'],
         'sdpa_backend':'math','linear_geometry':a.linear_geometry,'diagnostic_modified_gemm':a.linear_geometry!='hf',
-        'tokens':ids,'layers':[],'failures':[],'first_router_difference':None}
+        'tokens':ids,'layers':[],'failures':[],'first_router_difference':None,'first_router_set_difference':None,
+        'diagnostic_native_router_logits':a.native_router_diagnostic}
 
     def native(path):
         raw=path.read_bytes();fp32=path.suffix=='.f32'
@@ -93,6 +99,8 @@ def main():
             traces={};hooks=[]
             for key,module in [('input_norm',layer.input_layernorm),('post_norm',layer.post_attention_layernorm),('router',layer.mlp.gate)]:
                 hooks.append(module.register_forward_hook(lambda m,inp,out,key=key:traces.__setitem__(key,out.detach().clone())))
+            if a.native_router_diagnostic:
+                hooks.append(layer.mlp.gate.register_forward_hook(lambda m,inp,out,l=l:native(a.trace/f'layer{l}-router.bf16').reshape_as(out).to(out.device)))
             mixer=layer.linear_attn if hasattr(layer,'linear_attn') else layer.self_attn
             hooks.append(mixer.register_forward_hook(lambda m,inp,out:traces.__setitem__('mixer',out[0].detach().clone())))
             if hasattr(layer,'linear_attn'):
@@ -107,6 +115,20 @@ def main():
                 row['first_layer_operations']={key:error(value,native(a.trace/f'layer{l}-{key}.bf16')) for key,value in traces.items()}
             nr=json.loads((a.trace/f'layer{l}-routes.json').read_text());ni=torch.tensor(nr['ids'])
             row['different_route_slots']=int((ni!=routing['ids']).sum())
+            ni_rows=ni.reshape(t,c.num_experts_per_tok);ri_rows=routing['ids'].reshape_as(ni_rows)
+            row['different_expert_set_rows']=int((ni_rows.sort(-1).values!=ri_rows.sort(-1).values).any(-1).sum())
+            if row['different_expert_set_rows'] and report['first_router_set_difference'] is None:report['first_router_set_difference']=l
+            row['router_cutoff_diagnostic']=[]
+            actual_router=traces['router'].float().cpu().reshape(t,c.num_experts)
+            native_router=native(a.trace/f'layer{l}-router.bf16').float().reshape_as(actual_router)
+            for position in range(t):
+                if torch.equal(ni_rows[position].sort().values,ri_rows[position].sort().values):continue
+                scores=actual_router[position].sort(descending=True).values
+                row['router_cutoff_diagnostic'].append({'position':position,'native_experts':ni_rows[position].tolist(),'reference_experts':ri_rows[position].tolist(),
+                    'reference_top8_top9_logit_margin':float(scores[c.num_experts_per_tok-1]-scores[c.num_experts_per_tok]),
+                    'router_max_abs_error':float((native_router[position]-actual_router[position]).abs().max())})
+            (a.output/f'layer{l}-reference-router.bf16').write_bytes(traces['router'].cpu().view(torch.uint16).numpy().tobytes())
+            (a.output/f'layer{l}-reference-routes.json').write_text(json.dumps({'ids':routing['ids'].tolist(),'weights':routing['weights'].tolist()},indent=2))
             first_difference=row['different_route_slots'] and report['first_router_difference'] is None
             if first_difference:
                 report['first_router_difference']=l
@@ -114,6 +136,7 @@ def main():
                 local_y,_=layer(native_input.cuda(),None,valid,empty,positions,False)
                 row['isolated_native_input_output_error']=error(local_y,native(a.trace/f'layer{l}-output.bf16'))
                 row['isolated_different_route_slots']=int((ni!=routing['ids']).sum())
+                row['isolated_different_expert_set_rows']=int((ni_rows.sort(-1).values!=routing['ids'].reshape_as(ni_rows).sort(-1).values).any(-1).sum())
                 row['isolated_operations']={key:error(value,native(a.trace/f'layer{l}-{key}.bf16')) for key,value in traces.items()}
             if c.layer_types[l]=='linear_attention':
                 row['conv_state_error']=error(cache['conv'],native(a.state/f'layer{l}-conv.bf16'))
@@ -140,14 +163,23 @@ def main():
         logits=F.linear(x,head).float().cpu().reshape(t,c.vocab_size)
         actual=native(a.trace/'logits.bf16').float().reshape_as(logits)
         report['logits_error']=error(logits,actual)
+        report['centered_logits_error']=error(logits-logits.mean(-1,keepdim=True),actual-actual.mean(-1,keepdim=True))
+        (a.output/'reference-logits.bf16').write_bytes(logits.bfloat16().view(torch.uint16).numpy().tobytes())
+        (a.output/'native-logits.bf16').write_bytes(actual.bfloat16().view(torch.uint16).numpy().tobytes())
+        ref_logp=logits.log_softmax(-1);native_logp=actual.log_softmax(-1);ref_p=ref_logp.exp();native_p=native_logp.exp()
+        kl=(ref_p*(ref_logp-native_logp)).sum(-1);tv=(ref_p-native_p).abs().sum(-1)/2
+        report['probability_comparison']={'kl_reference_to_native_per_position':kl.tolist(),'total_variation_per_position':tv.tolist(),
+            'reference_top1_probability_per_position':ref_p.max(-1).values.tolist(),'native_top1_probability_per_position':native_p.max(-1).values.tolist()}
         report['native_argmax']=actual.argmax(-1).tolist();report['reference_argmax']=logits.argmax(-1).tolist()
         report['last_token_argmax_equal']=report['native_argmax'][-1]==report['reference_argmax'][-1]
+        report['different_argmax_positions']=[i for i,(x,y) in enumerate(zip(report['native_argmax'],report['reference_argmax'])) if x!=y]
         top=logits[-1].topk(2).values;report['reference_last_top1_margin']=float(top[0]-top[1])
         top=actual[-1].topk(2).values;report['native_last_top1_margin']=float(top[0]-top[1])
     report['within_tensor_tolerances']=not report['failures']
     report['layer_output_relative_rms_limit']=0.004
-    report['passed']=report['within_tensor_tolerances'] and report['first_router_difference'] is None and report['logits_error']['relative_rms_error']<0.004
-    report['unmodified_reference_pass']=report['passed'] and not report['diagnostic_modified_gemm']
+    report['within_numeric_bounds']=report['within_tensor_tolerances'] and report['first_router_difference'] is None and report['logits_error']['relative_rms_error']<0.004
+    report['passed']=report['within_numeric_bounds'] and not report['diagnostic_modified_gemm'] and not a.native_router_diagnostic
+    report['unmodified_reference_pass']=report['passed']
     report['note']='Routing/argmax differences are reported separately from tensor error bounds; this does not test HF block denoising equivalence.'
     (a.output/'summary.json').write_text(json.dumps(report,indent=2))
     print(json.dumps({k:v for k,v in report.items() if k not in ('layers','failures')},indent=2),flush=True)

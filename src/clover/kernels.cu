@@ -6,6 +6,17 @@ namespace {
 __device__ float f(BF x) {return __bfloat162float(x);}
 __device__ BF b(float x) {return __float2bfloat16_rn(x);}
 __device__ float silu(float x) {return x/(1.0f+expf(-x));}
+// Fixed per-row geometry, matching Torch's vectorized FP32 reduction for
+// these short batched rows. Four accumulators preserve its operation order.
+// Keeping the same geometry at T=1 also preserves causal replay invariance.
+__device__ float squared_sum4(const BF* row,int width) {
+    float values[4]={0,0,0,0};
+    for(int base=int(threadIdx.x)*4;base<width;base+=128)
+        for(int i=0;i<4;++i) {const float x=f(row[base+i]);values[i]+=x*x;}
+    float sum=values[0];for(int i=1;i<4;++i) sum+=values[i];
+    for(int distance=16;distance;distance/=2) sum+=__shfl_down_sync(0xffffffff,sum,distance);
+    return __shfl_sync(0xffffffff,sum,0);
+}
 __device__ float reduce_sum(float x) {
     __shared__ float partial[32];
     for(int s=16;s;s/=2) x+=__shfl_down_sync(0xffffffff,x,s);
@@ -29,13 +40,27 @@ __device__ float reduce_max(float x) {
 __global__ void cast_kernel(const float* in,BF* out,int n) {
     int i=int(blockIdx.x*blockDim.x+threadIdx.x);if(i<n) out[i]=b(in[i]);
 }
+__global__ void router_weights_kernel(const BF* logits,const int* ids,const int* allowed,float* weights) {
+    const int row=int(blockIdx.x),lane=int(threadIdx.x);float values[8],maximum=-INFINITY;
+    for(int i=0;i<8;++i) {const int e=lane+32*i;values[i]=allowed[e]?f(logits[row*256+e]):-INFINITY;maximum=fmaxf(maximum,values[i]);}
+    for(int offset=16;offset;offset/=2) maximum=fmaxf(maximum,__shfl_xor_sync(0xffffffff,maximum,offset));
+    float total=0;
+    for(int i=0;i<8;++i) {values[i]=expf(values[i]-maximum);total+=values[i];}
+    for(int offset=16;offset;offset/=2) total+=__shfl_xor_sync(0xffffffff,total,offset);
+    const int expert=ids[row*8+(lane<8?lane:0)];float selected=0;
+    for(int i=0;i<8;++i) {const float value=__shfl_sync(0xffffffff,values[i],expert&31);if(i==expert/32) selected=value/total;}
+    if(lane>=8) selected=0;
+    float sum=selected;for(int offset=4;offset;offset/=2) sum+=__shfl_down_sync(0xffffffff,sum,offset);
+    sum=fmaxf(__shfl_sync(0xffffffff,sum,0),1e-12f);
+    if(lane<8) weights[row*8+lane]=selected/sum;
+}
 __global__ void add_kernel(const BF* a,const BF* c,BF* out,int n) {
     int i=int(blockIdx.x*blockDim.x+threadIdx.x);if(i<n) out[i]=b(f(a[i])+f(c[i]));
 }
 __global__ void norm_kernel(const BF* in,const BF* w,const BF* gate,BF* out,int width,float eps,bool centered) {
-    const int row=int(blockIdx.x),j=int(threadIdx.x);float sum=0;
-    for(int d=j;d<width;d+=int(blockDim.x)) {float x=f(in[row*width+d]);sum+=x*x;}
-    float inv=rsqrtf(reduce_sum(sum)/float(width)+eps);
+    const int row=int(blockIdx.x),j=int(threadIdx.x);
+    const float sum=squared_sum4(in+row*width,width);
+    float inv=rsqrtf(sum/float(width)+eps);
     for(int d=j;d<width;d+=int(blockDim.x)) {
         float value=f(in[row*width+d])*inv*(f(w[d])+(centered?1.0f:0.0f));
         if(gate) value*=silu(f(gate[row*width+d]));out[row*width+d]=b(value);
@@ -55,9 +80,9 @@ template<bool Gated>
 __global__ void prepare_kernel(const BF* proj,const BF* weight,BF* out,BF* gate,int heads,int dim,int rd,int prefix,float theta,float eps) {
     extern __shared__ BF normalized[];
     const int row=int(blockIdx.x),t=row/heads,j=int(threadIdx.x);
-    const int stride=Gated?2*dim:dim;float sum=0;
-    for(int d=j;d<dim;d+=int(blockDim.x)) {float x=f(proj[row*stride+d]);sum+=x*x;}
-    const float inv=rsqrtf(reduce_sum(sum)/float(dim)+eps);
+    const int stride=Gated?2*dim:dim;
+    const float sum=squared_sum4(proj+row*stride,dim);
+    const float inv=rsqrtf(sum/float(dim)+eps);
     for(int d=j;d<dim;d+=int(blockDim.x)) {
         normalized[d]=b(f(proj[row*stride+d])*inv*(1.0f+f(weight[d])));
         if(Gated) gate[row*dim+d]=proj[row*stride+dim+d];
@@ -117,11 +142,10 @@ __global__ void commit_conv_kernel(const BF* raw,BF* history,int t,int channels,
     }
 }
 __global__ void qk_kernel(const BF* mixed,float* q,float* k,int kh,int vh,int kd,int vd) {
-    const int row=int(blockIdx.x),token=row/kh,head=row%kh,d=int(threadIdx.x),channels=2*kh*kd+vh*vd;
-    float qv=d<kd?f(mixed[token*channels+head*kd+d]):0;
-    float kv=d<kd?f(mixed[token*channels+kh*kd+head*kd+d]):0;
-    float qsum=reduce_sum(qv*qv);float ksum=reduce_sum(kv*kv);
-    if(d<kd) {q[row*kd+d]=qv*rsqrtf(qsum+1e-6f);k[row*kd+d]=kv*rsqrtf(ksum+1e-6f);}
+    const int row=int(blockIdx.x),token=row/kh,head=row%kh,channels=2*kh*kd+vh*vd;
+    const BF* qr=mixed+token*channels+head*kd;const BF* kr=qr+kh*kd;
+    const float qsum=squared_sum4(qr,kd),ksum=squared_sum4(kr,kd);
+    for(int d=int(threadIdx.x);d<kd;d+=32) {q[row*kd+d]=f(qr[d])*rsqrtf(qsum+1e-6f);k[row*kd+d]=f(kr[d])*rsqrtf(ksum+1e-6f);}
 }
 __global__ void factors_kernel(const BF* a,const BF* beta_in,const BF* A_log,const BF* dt,float* g,BF* beta,int n,int heads) {
     const int i=int(blockIdx.x*blockDim.x+threadIdx.x);if(i>=n) return;
@@ -168,13 +192,14 @@ __global__ void preview_kernel(const BF* mixed,const float* q,const float* k,con
 }
 }
 void cast(const float* x,BF* y,int n,cudaStream_t s) {cast_kernel<<<(n+255)/256,256,0,s>>>(x,y,n);}
+void router_weights(const BF* x,const int* ids,const int* allowed,float* weights,int rows,cudaStream_t s) {router_weights_kernel<<<rows,32,0,s>>>(x,ids,allowed,weights);}
 void residual(const BF* a,const BF* c,BF* y,int n,cudaStream_t s) {add_kernel<<<(n+255)/256,256,0,s>>>(a,c,y,n);}
-void norm(const BF* x,const BF* w,const BF* g,BF* y,int rows,int width,float eps,bool centered,cudaStream_t s) {norm_kernel<<<rows,256,0,s>>>(x,w,g,y,width,eps,centered);}
+void norm(const BF* x,const BF* w,const BF* g,BF* y,int rows,int width,float eps,bool centered,cudaStream_t s) {norm_kernel<<<rows,32,0,s>>>(x,w,g,y,width,eps,centered);}
 void swiglu(const BF* gate,const BF* up,BF* out,int n,cudaStream_t s) {swiglu_kernel<<<(n+255)/256,256,0,s>>>(gate,up,out,n);}
 void sigmoid_mul(const BF* x,const BF* g,BF* y,int rows,int width,bool scalar,cudaStream_t s) {sigmoid_kernel<<<(rows*width+255)/256,256,0,s>>>(x,g,y,rows*width,width,scalar);}
 void embedding(const BF* table,const int* ids,BF* y,int t,int width,cudaStream_t s) {embedding_kernel<<<(t*width+255)/256,256,0,s>>>(table,ids,y,t,width);}
-void prepare_q(const BF* p,const BF* w,BF* q,BF* g,int t,int h,int d,int rd,int prefix,float theta,float eps,cudaStream_t s) {prepare_kernel<true><<<t*h,256,size_t(d)*2,s>>>(p,w,q,g,h,d,rd,prefix,theta,eps);}
-void prepare_k(const BF* p,const BF* w,BF* k,int t,int h,int d,int rd,int prefix,float theta,float eps,cudaStream_t s) {prepare_kernel<false><<<t*h,256,size_t(d)*2,s>>>(p,w,k,nullptr,h,d,rd,prefix,theta,eps);}
+void prepare_q(const BF* p,const BF* w,BF* q,BF* g,int t,int h,int d,int rd,int prefix,float theta,float eps,cudaStream_t s) {prepare_kernel<true><<<t*h,32,size_t(d)*2,s>>>(p,w,q,g,h,d,rd,prefix,theta,eps);}
+void prepare_k(const BF* p,const BF* w,BF* k,int t,int h,int d,int rd,int prefix,float theta,float eps,cudaStream_t s) {prepare_kernel<false><<<t*h,32,size_t(d)*2,s>>>(p,w,k,nullptr,h,d,rd,prefix,theta,eps);}
 void attention(const BF* q,const BF* nk,const BF* nv,const BF* pk,const BF* pv,BF* y,int t,int prefix,int h,int kv,int d,bool preview,cudaStream_t s) {
     require(t>0 && prefix>=0 && t+prefix<=8192 && h%kv==0,"Unsupported short-context attention shape");
     attention_kernel<<<t*h,256,size_t(t+prefix)*4,s>>>(q,nk,nv,pk,pv,y,t,prefix,h,kv,d,preview);
@@ -184,7 +209,7 @@ void gdn_conv(const BF* raw,const BF* history,const BF* left,const BF* right,BF*
 }
 void gdn_commit_conv(const BF* raw,BF* history,int t,int ch,int taps,cudaStream_t s) {commit_conv_kernel<<<(ch+255)/256,256,0,s>>>(raw,history,t,ch,taps);}
 void gdn_qk(const BF* mixed,float* q,float* k,int t,int kh,int vh,int kd,int vd,cudaStream_t s) {
-    require(kd==128&&vd==128 && vh%kh==0,"Initial GDN kernel requires KD=VD=128 and divisible heads");qk_kernel<<<t*kh,128,0,s>>>(mixed,q,k,kh,vh,kd,vd);
+    require(kd==128&&vd==128 && vh%kh==0,"Initial GDN kernel requires KD=VD=128 and divisible heads");qk_kernel<<<t*kh,32,0,s>>>(mixed,q,k,kh,vh,kd,vd);
 }
 void gdn_factors(const BF* a,const BF* beta_in,const BF* al,const BF* dt,float* g,BF* beta,int t,int h,cudaStream_t s) {factors_kernel<<<(t*h+255)/256,256,0,s>>>(a,beta_in,al,dt,g,beta,t*h,h);}
 void gdn_scan(const BF* mixed,const float* q,const float* k,const float* g,const BF* beta,const float* si,float* so,BF* y,int t,int kh,int vh,int kd,int vd,cudaStream_t s) {

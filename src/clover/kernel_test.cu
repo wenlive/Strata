@@ -84,6 +84,15 @@ int main(int argc,char** argv) {
             auto r=route(c.at("logits").get<std::vector<float>>(),c.at("tokens"),c.at("experts"),c.at("top_k"),c.at("preview"),c.at("top_p"));
             report["router"].push_back({{"ids",r.ids},{"weights",r.weights},{"coreset",r.coreset}});
         }
+        if(job.contains("router_device")) {
+            int i=0;
+            for(const auto& c:job.at("router_device")) {
+                const int rows=c.at("rows");auto x=load(c.at("logits")),ids=load(c.at("ids")),allowed=load(c.at("allowed"));
+                DeviceBuffer weights(size_t(rows)*8*4);
+                ops::router_weights(x.as<BF>(),ids.as<int>(),allowed.as<int>(),weights.as<float>(),rows,stream);
+                CLOVER_CUDA(cudaStreamSynchronize(stream));dump(weights,root/("router-weights"+std::to_string(i++)+".f32"));
+            }
+        }
         if(job.contains("speculation")) for(const auto& c:job.at("speculation")) {
             const auto stops=c.at("eos").get<std::vector<int>>();
             auto r=decide_exact(c.at("candidates").get<std::vector<int>>(),c.at("logits").get<std::vector<float>>(),c.at("vocab"),c.at("remaining"),std::set<int>(stops.begin(),stops.end()));
