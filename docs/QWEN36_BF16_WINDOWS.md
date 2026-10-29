@@ -1,5 +1,10 @@
 # Qwen3.6 BF16 text comparison on Windows
 
+Latest arithmetic changes and fresh HF failures are in
+[the numerical review](QWEN36_BF16_NUMERICS.md). Historical measurements below
+retain their original build and scope; they are not results for the new binary.
+Fresh controls and profiling are in [the full review](BF16_REVIEW_20261029.md).
+
 This is an opt-in experimental comparison path, independent of the Clover
 branch. Base commit: 46c152a1310f77cd2f0ce2c7cd213962df14fe83. It uses Strata's
 DirectFile and prefill::Gemm with bounded BF16 expert caching, and reuses causal
