@@ -140,6 +140,10 @@ def main():
             r=run(a.exe,job_path,result)
             assert r.returncode==0,(stem,r.stderr[-4000:])
             parsed=json.loads(result.read_text());errors=[]
+            for step in parsed['results']:
+                stats=step['stats']
+                assert stats['ram_gpu_duplicate_experts']==0,'Exclusive caches contain duplicate experts'
+                assert stats['host_staging_bytes']+stats['gpu_staging_bytes']<=job['staging_bytes']
             for n,(actual,ref) in enumerate(zip(parsed['results'],refs)):
                 got=torch.tensor(actual['output']).reshape(rows,2048)
                 diff=(got-ref).abs();maxerr=diff.max().item();meanerr=diff.mean().item()

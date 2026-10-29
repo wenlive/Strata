@@ -7,6 +7,7 @@
 #endif
 #include <cstring>
 #include <limits>
+#include <unordered_set>
 
 namespace strata::clover {
 Json memory_snapshot() {
@@ -89,10 +90,14 @@ ExpertStore::ExpertStore(const std::filesystem::path& path,uint64_t ram_budget,
     const uint64_t gpu_slots=std::min<uint64_t>(vram_budget/blob_bytes,uint64_t(layers)*experts);
     const uint64_t ram_slots=std::min<uint64_t>(ram_budget/blob_bytes,uint64_t(layers)*experts);
     const uint64_t gpu_stage=gpu_slots?0:blob_bytes;
-    require(scratch_bytes_+gpu_stage<=staging_budget,"Staging budget too small: need "+std::to_string(scratch_bytes_+gpu_stage)+" bytes (host+GPU)");
+    // A separate bounded pinned slot preserves a GPU victim while a RAM hit
+    // is promoted, including when RAM contains only one expert (a swap).
+    eviction_bytes_=gpu_slots&&ram_slots?blob_bytes:0;
+    const uint64_t staging=scratch_bytes_+eviction_bytes_+gpu_stage;
+    require(staging<=staging_budget,"Staging budget too small: need "+std::to_string(staging)+" bytes (host+GPU)");
 #if defined(_WIN32)
     MEMORYSTATUSEX mem{};mem.dwLength=sizeof(mem);require(GlobalMemoryStatusEx(&mem),"Cannot query host capacity");
-    const uint64_t host=ram_slots*blob_bytes+scratch_bytes_;
+    const uint64_t host=ram_slots*blob_bytes+scratch_bytes_+eviction_bytes_;
     require(host+(4ull<<30)<std::min<uint64_t>(mem.ullAvailPhys,mem.ullAvailPageFile),"RAM/commit budget would leave under 4 GiB headroom");
 #endif
     size_t gpu_free=0,gpu_total=0;CLOVER_CUDA(cudaMemGetInfo(&gpu_free,&gpu_total));
@@ -103,6 +108,7 @@ ExpertStore::ExpertStore(const std::filesystem::path& path,uint64_t ram_budget,
     scratch_=platform::DirectFile::alloc_aligned(size_t(scratch_bytes_));
     require(scratch_!=nullptr,"Cannot allocate aligned staging");
     CLOVER_CUDA(cudaHostRegister(scratch_,size_t(scratch_bytes_),cudaHostRegisterDefault));
+    if(eviction_bytes_) CLOVER_CUDA(cudaMallocHost(&eviction_,size_t(eviction_bytes_)));
     CLOVER_CUDA(cudaEventCreateWithFlags(&scratch_done_,cudaEventDisableTiming));
     CLOVER_CUDA(cudaEventRecord(scratch_done_,stream_));
     CLOVER_CUDA(cudaEventCreateWithFlags(&stage_done_,cudaEventDisableTiming));
@@ -118,6 +124,7 @@ ExpertStore::~ExpertStore() {
     if(stage_done_) cudaEventDestroy(stage_done_);
     if(scratch_done_) cudaEventDestroy(scratch_done_);
     if(scratch_) {cudaHostUnregister(scratch_);platform::DirectFile::free_aligned(scratch_);}
+    if(eviction_) cudaFreeHost(eviction_);
 }
 platform::DirectFile& ExpertStore::file(const std::string& name) {
     require(index.at("files").contains(name),"Unknown slice source: "+name);
@@ -170,9 +177,17 @@ const BF* ExpertStore::acquire(int layer,int expert) {
     }
     ++gpu_miss_;
     BF* target=nullptr;
+    int demoted_key=-1;
     if(!gpu_slots_.empty()) {
         gs=victim(gpu_slots_);CLOVER_CUDA(cudaEventSynchronize(gpu_slots_[size_t(gs)].done));
         target=gpu_.as<BF>()+uint64_t(gs)*blob_bytes/2;
+        if(eviction_ && gpu_slots_[size_t(gs)].key>=0) {
+            demoted_key=gpu_slots_[size_t(gs)].key;
+            // Finish D2H before overwriting the GPU slot. One stream also
+            // orders this copy after the prior expert's last computation.
+            CLOVER_CUDA(cudaMemcpyAsync(eviction_,target,size_t(blob_bytes),cudaMemcpyDeviceToHost,stream_));
+            CLOVER_CUDA(cudaStreamSynchronize(stream_));d2h_bytes_+=blob_bytes;
+        }
         gpu_slots_[size_t(gs)].key=-1;
     } else {
         CLOVER_CUDA(cudaEventSynchronize(stage_done_));target=gpu_stage_.as<BF>();
@@ -181,10 +196,13 @@ const BF* ExpertStore::acquire(int layer,int expert) {
     if(rs>=0) {
         ++ram_hit_;ram_slots_[size_t(rs)].age=++age_;
         copy_host(ram_.get()+uint64_t(rs)*blob_bytes,target,blob_bytes);
+        // copy_host has consumed all RAM bytes into pinned scratch on return.
+        // Its final asynchronous transfer reads scratch, not this RAM slot.
+        if(gs>=0) ram_slots_[size_t(rs)].key=-1;
     } else {
         ++ram_miss_;
         uint8_t* host=nullptr;
-        if(!ram_slots_.empty()) {rs=victim(ram_slots_);host=ram_.get()+uint64_t(rs)*blob_bytes;ram_slots_[size_t(rs)].key=-1;}
+        if(gs<0 && !ram_slots_.empty()) {rs=victim(ram_slots_);host=ram_.get()+uint64_t(rs)*blob_bytes;ram_slots_[size_t(rs)].key=-1;}
         const auto& ex=index.at("experts").at(size_t(key));
         uint64_t base=0;
         for(const char* part:{"gate_up","down"}) {
@@ -198,7 +216,12 @@ const BF* ExpertStore::acquire(int layer,int expert) {
             }
             base+=bytes;
         }
-        if(rs>=0) {ram_slots_[size_t(rs)].key=key;ram_slots_[size_t(rs)].age=++age_;}
+        if(host) {ram_slots_[size_t(rs)].key=key;ram_slots_[size_t(rs)].age=++age_;}
+    }
+    if(demoted_key>=0) {
+        const int dest=victim(ram_slots_);
+        std::memcpy(ram_.get()+uint64_t(dest)*blob_bytes,eviction_,size_t(blob_bytes));
+        ram_slots_[size_t(dest)].key=demoted_key;ram_slots_[size_t(dest)].age=++age_;
     }
     if(gs>=0) {gpu_slots_[size_t(gs)].key=key;gpu_slots_[size_t(gs)].age=++age_;}
     active_key_=key;active_slot_=gs;
@@ -230,13 +253,19 @@ void ExpertStore::read_bytes(const Json& slice,void* output,uint64_t bytes) {
     }
 }
 Json ExpertStore::stats() const {
+    std::unordered_set<int> gpu_keys;
+    for(const auto& s:gpu_slots_) if(s.key>=0) gpu_keys.insert(s.key);
+    uint64_t duplicates=0;
+    for(const auto& s:ram_slots_) if(s.key>=0 && gpu_keys.count(s.key)) ++duplicates;
     return {{"gpu_hits",gpu_hit_},{"gpu_misses",gpu_miss_},{"ram_hits",ram_hit_},{"ram_misses",ram_miss_},
             {"logical_file_read_bytes",logical_bytes_},{"aligned_file_requested_bytes",aligned_requested_},
-            {"aligned_file_completed_bytes",aligned_completed_},{"read_calls",read_calls_},{"h2d_bytes",h2d_bytes_},
+            {"aligned_file_completed_bytes",aligned_completed_},{"read_calls",read_calls_},{"h2d_bytes",h2d_bytes_},{"d2h_bytes",d2h_bytes_},
             {"read_ms",read_ms_},{"host_staging_wait_ms",h2d_wait_ms_},
             {"ram_cache_budget_bytes",ram_budget_},{"ram_cache_allocated_bytes",ram_slots_.size()*blob_bytes},
             {"vram_cache_budget_bytes",vram_budget_},{"vram_cache_allocated_bytes",gpu_.bytes},
-            {"staging_budget_bytes",staging_budget_},{"host_staging_bytes",scratch_bytes_},{"gpu_staging_bytes",gpu_stage_.bytes},
+            {"staging_budget_bytes",staging_budget_},{"host_staging_bytes",scratch_bytes_+eviction_bytes_},
+            {"host_read_staging_bytes",scratch_bytes_},{"host_eviction_staging_bytes",eviction_bytes_},{"gpu_staging_bytes",gpu_stage_.bytes},
+            {"cache_policy","exclusive GPU/RAM LRU; GPU eviction demotes to RAM"},{"ram_gpu_duplicate_experts",duplicates},
             {"io_mode","Strata DirectFile / unbuffered aligned reads; no mmap"},
             {"physical_ssd_bytes",nullptr},{"physical_ssd_note","Not measured at device level; file bytes are logical unbuffered completions"}};
 }

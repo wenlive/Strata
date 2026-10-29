@@ -6,8 +6,8 @@
 namespace strata::clover {
 // All expert computation and copies share one stream. Each reusable GPU slot
 // has a completion event. Host scratch is reused only after its H2D completes.
-// No background prefetch or mmap. RAM and VRAM are independent bounded LRUs;
-// a GPU slot never requires a permanent host copy.
+// No background prefetch or mmap. RAM and VRAM form exclusive bounded LRUs:
+// GPU eviction demotes to RAM; promotion removes the host cache entry.
 class ExpertStore {
 public:
     ExpertStore(const std::filesystem::path& index, uint64_t ram_budget,
@@ -33,12 +33,13 @@ private:
     std::vector<Slot> ram_slots_,gpu_slots_;
     DeviceBuffer gpu_,gpu_stage_;
     void* scratch_=nullptr;
-    uint64_t scratch_bytes_=0;
+    void* eviction_=nullptr;
+    uint64_t scratch_bytes_=0,eviction_bytes_=0;
     cudaEvent_t scratch_done_=nullptr,stage_done_=nullptr;
     int active_key_=-1,active_slot_=-1;
     uint64_t age_=0,ram_budget_=0,vram_budget_=0,staging_budget_=0;
     uint64_t gpu_hit_=0,gpu_miss_=0,ram_hit_=0,ram_miss_=0;
-    uint64_t logical_bytes_=0,aligned_requested_=0,aligned_completed_=0,read_calls_=0,h2d_bytes_=0;
+    uint64_t logical_bytes_=0,aligned_requested_=0,aligned_completed_=0,read_calls_=0,h2d_bytes_=0,d2h_bytes_=0;
     double read_ms_=0,h2d_wait_ms_=0;
     platform::DirectFile& file(const std::string& name);
     const uint8_t* direct_slice(const Json& slice,uint64_t at,uint64_t n);

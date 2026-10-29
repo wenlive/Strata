@@ -5,7 +5,7 @@ namespace strata::clover {
 Json counter_delta(const Json& after,const Json& before) {
     Json out;
     for(const char* key:{"gpu_hits","gpu_misses","ram_hits","ram_misses","logical_file_read_bytes",
-                         "aligned_file_requested_bytes","aligned_file_completed_bytes","read_calls","h2d_bytes"})
+                         "aligned_file_requested_bytes","aligned_file_completed_bytes","read_calls","h2d_bytes","d2h_bytes"})
         out[key]=after.at(key).get<uint64_t>()-before.at(key).get<uint64_t>();
     for(const char* key:{"read_ms","host_staging_wait_ms"}) out[key]=after.at(key).get<double>()-before.at(key).get<double>();
     return out;

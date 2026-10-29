@@ -27,13 +27,14 @@ def main():
             selected.append(phase);at+=1
             if phase['phase']!='prefill':seen_nonprefill=True
             if not run['rounds'] and phase['phase']=='prefill' and phase['prefix_after']==len(run['input_tokens']):break
-        by_phase=collections.defaultdict(lambda:{'calls':0,'tokens':0,'elapsed_ms':0,'logical_file_read_bytes':0,'h2d_weight_bytes':0,'h2d_control_bytes':0,'read_calls':0,
+        by_phase=collections.defaultdict(lambda:{'calls':0,'tokens':0,'elapsed_ms':0,'logical_file_read_bytes':0,'h2d_weight_bytes':0,'d2h_weight_bytes':0,'h2d_control_bytes':0,'read_calls':0,
                                                    'gpu_hits':0,'gpu_misses':0,'ram_hits':0,'ram_misses':0,'unique_expert_evaluations':0})
         memories=[]
         for phase in selected:
             out=by_phase[phase['phase']];out['calls']+=1;out['tokens']+=phase['input_tokens'];out['elapsed_ms']+=phase['elapsed_ms']
             for key in ('logical_file_read_bytes','read_calls','gpu_hits','gpu_misses','ram_hits','ram_misses'):out[key]+=phase['cache_io'][key]
             out['h2d_weight_bytes']+=phase['cache_io']['h2d_bytes'];out['h2d_control_bytes']+=phase['control_h2d_bytes']
+            out['d2h_weight_bytes']+=phase['cache_io'].get('d2h_bytes',0)
             out['unique_expert_evaluations']+=sum(phase['experts_unique_per_layer']);memories.append(phase['memory'])
         if first is None:first=run['output_tokens']
         summary={k:run[k] for k in ('repeat','run_kind','mode','ttft_ms','generation_elapsed_ms','steady_token_per_second','logical_expert_read_bytes_per_output_token')}
