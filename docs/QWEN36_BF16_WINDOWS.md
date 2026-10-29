@@ -74,3 +74,5 @@ Store timing counters additionally distinguish CPU weight memcpy, RAM-hit stagin
 
 Index metadata coverage tests reject eight corrupt layouts (missing, dtype, shape, range, weight-map, duplicate, unexpected and overlapping tensors). Production also rejects metadata-only and selected-layer scopes. Complete indexing now checks every file size before hashing any shard; an unfinished checkpoint publishes no runnable index.
 
+
+HTTP Range fallback: when Xet transport stalls, `python tools/qwen35/download_bf16_ranges.py --destination <model> --files model-00010-of-00026.safetensors model-00024-of-00026.safetensors --workers 8 --segment-mib 128` downloads bounded segments, validates every response range, stream-assembles and verifies the complete official SHA256 before publishing. Segment files remain resumable; they are never runtime model files. The subset marker does not mark the whole checkpoint complete. This path is a transport fallback, not a weight conversion.
