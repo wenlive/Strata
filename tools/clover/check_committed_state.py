@@ -4,6 +4,7 @@ No rejected candidates or pending bonus are replayed. A new native process and
 cache configuration can force misses independently of the original generation.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,7 +34,7 @@ def main():
     assert result.returncode==0,(a.output/'native.log').read_text()[-4000:]
     replay=a.output/'replayed-state';om=json.loads((original/'manifest.json').read_text());rm=json.loads((replay/'manifest.json').read_text())
     assert om['prefix_tokens']==rm['prefix_tokens']==len(run['committed_token_ids'])
-    report={'kind':'native-speculative-commit-vs-direct-causal-replay','committed_tokens':run['committed_token_ids'],
+    report={'kind':'native-generation-commit-vs-direct-causal-replay','generation_mode':run['mode'],'committed_tokens':run['committed_token_ids'],
             'prefill_chunk':a.prefill_chunk,'comparisons':[],'failures':[]}
 
     def values(path):
@@ -51,6 +52,9 @@ def main():
             passed=rms<0.004 and maximum<=0.02*max(float(np.abs(one).max()) if len(one) else 0,1e-6)+1e-6
             row={'layer':layer['layer'],'state':name,'max_abs_error':maximum,'mean_abs_error':mean,
                  'relative_rms_error':rms,'different_components':int(np.count_nonzero(one!=two)),'passed':passed}
+            with (original/desc['file']).open('rb') as file:row['original_sha256']=hashlib.file_digest(file,'sha256').hexdigest()
+            with (replay/other['file']).open('rb') as file:row['replayed_sha256']=hashlib.file_digest(file,'sha256').hexdigest()
+            row['byte_equal']=row['original_sha256']==row['replayed_sha256']
             report['comparisons'].append(row)
             if not passed:report['failures'].append(row)
     report['passed']=not report['failures'];(a.output/'summary.json').write_text(json.dumps(report,indent=2))

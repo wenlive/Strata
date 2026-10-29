@@ -2,7 +2,7 @@
 
 The opt-in `strata-clover` CLI has generated short text with all 40 layers and
 the complete official BF16 checkpoint on an RTX 5070 Ti 16 GB. It implements
-causal inference and SGLang-style self-speculation with exact acceptance.
+causal inference, HF-style LowConfidence block denoising and SGLang-style self-speculation with exact acceptance.
 Experts stream from SSD through bounded RAM/VRAM caches. No quantization,
 permanent expert pruning, changed router or all-expert host bank is used.
 
@@ -11,6 +11,9 @@ selected-layer tests and complete native state-replay tests pass. A streamed
 40-layer HF comparison exceeds its existing tensor-error bounds, despite the
 same final-position argmax in the tested prompt. This branch is experimental;
 it is not a claim of complete validated Clover support.
+
+The independent `mode=denoise` loop and its separate latency/throughput
+definitions are documented in [block-denoising notes](CLOVER_BLOCK_DENOISING_WINDOWS.md).
 
 ## Pinned sources and reuse
 
@@ -104,7 +107,7 @@ Using the archive avoids a full-history dependency clone.
 curl.exe -L https://github.com/ggml-org/llama.cpp/archive/3cf03257f219afbe7334045ff7c6a06ac68c627d.tar.gz -o llama-pinned.tar.gz
 # Extract to C:/workspace/repos/reference/llama-cpp-3cf03257 first.
 cmake -S . -B C:/workspace/builds/T-20261028-clover-bf16/baseline -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTRATA_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=120 -DSTRATA_BUILD_TESTS=OFF -DSTRATA_BUILD_CLOVER=ON -DSTRATA_GGML_DIR=C:/workspace/repos/reference/llama-cpp-3cf03257
-cmake --build C:/workspace/builds/T-20261028-clover-bf16/baseline --target strata-clover strata-clover-expert-test strata-clover-kernel-test strata-clover-layer-test strata-clover-state-test -j 3
+cmake --build C:/workspace/builds/T-20261028-clover-bf16/baseline --target strata-clover strata-clover-expert-test strata-clover-kernel-test strata-clover-layer-test strata-clover-state-test strata-clover-denoise-test -j 3
 python tools/clover/chat.py --exe C:/workspace/builds/T-20261028-clover-bf16/baseline/strata-clover.exe --index C:/workspace/models/bundles/clover-bf16/4b0402b6/index.json --prompt "Count from 1 to 10." --output C:/workspace/runs/T-20261028-clover-bf16/new-request --mode selfspec --accept-rule exact --ram-cache-mib 2048 --vram-cache-mib 6144 --staging-mib 16 --context-tokens 256 --draft-width 8 --max-new-tokens 16
 ```
 

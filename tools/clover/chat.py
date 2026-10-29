@@ -18,9 +18,11 @@ def main():
     p.add_argument('--index',type=Path,required=True)
     p.add_argument('--prompt',required=True)
     p.add_argument('--output',type=Path,required=True,help='New evidence directory')
-    p.add_argument('--mode',choices=('selfspec','causal'),default='selfspec')
+    p.add_argument('--mode',choices=('selfspec','causal','denoise'),default='selfspec')
     p.add_argument('--accept-rule',choices=('exact',),default='exact')
     p.add_argument('--draft-width',type=int,choices=(2,4,8,16,32),default=8)
+    p.add_argument('--denoise-block-size',type=int,choices=(1,2,4,8,16,32),help='Whole-block LowConfidence width; default checkpoint 32, metadata unchanged')
+    p.add_argument('--denoise-threshold',type=float,help='LowConfidence strict probability threshold; default checkpoint 0.95, not selfspec acceptance')
     p.add_argument('--max-new-tokens',type=int,default=16)
     p.add_argument('--context-tokens',type=int,default=256)
     p.add_argument('--prefill-chunk',type=int,default=32)
@@ -35,6 +37,8 @@ def main():
     for key in ('presence','frequency','repetition'):
         p.add_argument(f'--{key}-penalty',type=float)
     a=p.parse_args()
+    if a.mode!='denoise' and (a.denoise_block_size is not None or a.denoise_threshold is not None):
+        p.error('Denoising options require --mode denoise')
     index=json.loads(a.index.read_text(encoding='utf-8'))
     if not index.get('complete') or index.get('scope')!='full-model':
         p.error('A complete, verified full-model index is required')
@@ -50,6 +54,10 @@ def main():
             'ram_cache_mib':a.ram_cache_mib,'vram_cache_mib':a.vram_cache_mib,
             'staging_mib':a.staging_mib,'repeats':a.repeats,'audit_state':a.audit_state,
             'result_file':str((a.output/'result.json').resolve())}
+    if a.mode=='denoise':
+        del config['accept_rule'];del config['draft_width']
+        if a.denoise_block_size is not None:config['denoise_block_size']=a.denoise_block_size
+        if a.denoise_threshold is not None:config['denoise_threshold']=a.denoise_threshold
     if a.dump_state:config['dump_final_state']=str((a.output/'state').resolve())
     if a.trace:config['trace_directory']=str((a.output/'trace').resolve())
     for key in ('presence','frequency','repetition'):

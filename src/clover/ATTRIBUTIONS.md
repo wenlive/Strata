@@ -15,3 +15,10 @@ The JSON dependency comes from Strata's pinned llama.cpp vendor tree:
 The standalone Python tests load reference functions from explicit source
 paths for numerical comparison. They do not bundle or run a separate HF model
 as the native inference path.
+
+The native LowConfidence controller follows HF `generate()` and
+`sampling_clover_moe.py` at the same pinned HF revision. SGLang's generic
+`dllm/algorithm/low_confidence.py`, PR head
+`2243dc6edb416073b60be0765904cabae9eb61cf`, was also inspected. That PR's
+Clover override currently rejects `dllm_algorithm`; it is not the runtime
+used for the block-denoising measurements.

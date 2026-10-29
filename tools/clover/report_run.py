@@ -40,6 +40,8 @@ def main():
             out['unique_expert_evaluations']+=sum(phase['experts_unique_per_layer']);memories.append(phase['memory'])
         if first is None:first=run['output_tokens']
         summary={k:run[k] for k in ('repeat','run_kind','mode','ttft_ms','generation_elapsed_ms','steady_token_per_second','logical_expert_read_bytes_per_output_token')}
+        for key in ('first_chunk_tokens','output_chunks','prefill_wall_ms','decode_wall_ms','decode_output_tokens','end_to_end_token_per_second','decode_only_token_per_second','steady_rate_definition','denoise_block_size','denoise_threshold'):
+            if key in run:summary[key]=run[key]
         summary.update({'outputs':len(run['output_tokens']),'outputs_match_first':run['output_tokens']==first,'phases':dict(by_phase),'round_acceptance':run['rounds'],
             'peak_process_working_set_bytes':max((m['peak_working_set_bytes'] for m in memories),default=0),
             'peak_process_commit_bytes':max((m['peak_pagefile_bytes'] for m in memories),default=0),
