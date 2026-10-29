@@ -13,7 +13,7 @@ def main():
         assert (cfg.get('presence_penalty'),cfg.get('frequency_penalty'),cfg.get('repetition_penalty'))==(0,0,1)
         if prompt is None:prompt=cfg['input_tokens']
         assert cfg['input_tokens']==prompt,'Different prompt IDs in control comparison'
-        case={'revision':raw['revision'],'config':cfg,'source':json.loads((root/'source-provenance.json').read_text()),'memory':b.get('sampled_process_and_device_memory'),'load':b['load'],'samples':[]}
+        case={'revision':raw['revision'],'config':cfg,'request':json.loads((root/'request.json').read_text()),'source':json.loads((root/'source-provenance.json').read_text()),'memory':b.get('sampled_process_and_device_memory'),'load':b['load'],'samples':[]}
         for original,s in zip(raw['runs'],b['runs']):
             phases={k:v for k,v in s['phases'].items() if k!='prefill'};tokens=len(original['output_tokens'])-1
             keys=('elapsed_ms','unique_expert_evaluations','logical_file_read_bytes','h2d_weight_bytes','d2h_weight_bytes','host_copy_bytes','host_copy_ms','read_ms','host_staging_wait_ms','ram_staging_wait_ms','demotion_wait_ms','gpu_hits','gpu_misses','ram_hits','ram_misses','read_calls')
@@ -33,8 +33,13 @@ def main():
         other=report['cases'][name.replace('clover-causal-','clover-selfspec-',1)]
         same=all(x['output_ids']==y['output_ids'] for x,y in zip(case['samples'],other['samples']));equal.append({'budget':name.removeprefix('clover-causal-'),'same_ids':same})
     report['clover_causal_vs_exact_output_checks']=equal;report['prompt_ids']=prompt
+    report['cache_budget_output_checks']=[]
+    for family in ('qwen-causal','clover-causal','clover-selfspec'):
+        ids=[s['output_ids'] for name,c in report['cases'].items() if name.startswith(family+'-') for s in c['samples']]
+        same=bool(ids) and all(x==ids[0] for x in ids)
+        report['cache_budget_output_checks'].append({'family':family,'same_ids':same});assert same
     (a.runs/'comparison-summary.json').write_text(json.dumps(report,indent=2))
-    text='# BF16 controlled comparison\n\nWarm samples, short Count prompt, greedy, penalties 0/0/1. See JSON for both requests, source hashes and validation limits.\n\n| Case | Steady token/s | TTFT s | Decode logical reads GiB | Decode H2D GiB | Host memcpy s | File wait s |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'+'\n'.join(table)+'\n\nLogical reads are not measured physical SSD bytes.\n'
+    text='# BF16 controlled comparison\n\nWarm samples, greedy, penalties 0/0/1. See JSON for prompts, both requests, source hashes and validation limits.\n\n| Case | Steady token/s | TTFT s | Decode logical reads GiB | Decode H2D GiB | Host memcpy s | File wait s |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n'+'\n'.join(table)+'\n\nLogical reads are not measured physical SSD bytes.\n'
     (a.runs/'comparison-summary.md').write_text(text);print(text)
     assert all(x['same_ids'] for x in equal),'Clover exact output differs from causal under penalty-free control'
 
