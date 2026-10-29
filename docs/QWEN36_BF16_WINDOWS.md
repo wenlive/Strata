@@ -71,3 +71,6 @@ Do not run the large checkpoint download during performance measurements.
 
 Store timing counters additionally distinguish CPU weight memcpy, RAM-hit staging waits and GPU demotion waits. They match the Clover instrumentation and do not change arithmetic or cache policy. Do not add CUDA copy durations to host waits as independent costs. Historical missing counters remain absent.
 
+
+Index metadata coverage tests reject eight corrupt layouts (missing, dtype, shape, range, weight-map, duplicate, unexpected and overlapping tensors). Production also rejects metadata-only and selected-layer scopes. Complete indexing now checks every file size before hashing any shard; an unfinished checkpoint publishes no runnable index.
+

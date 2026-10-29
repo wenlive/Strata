@@ -107,6 +107,12 @@ def main():
         if (lfs and sha256.hexdigest()!=lfs['sha256']) or (not lfs and info.get('blobId') and git.hexdigest()!=info['blobId']):raise ValueError(f'Official provenance mismatch: {name}')
     if a.audit_headers:headers=json.loads(a.audit_headers.read_text())
     else:
+        # Check coverage before hashing earlier multi-GB shards, so an
+        # unfinished download fails promptly and cannot publish a runtime index.
+        for filename in sorted(set(wm.values())):
+            path=a.model/filename
+            if not path.is_file() or path.stat().st_size!=api[filename]['size']:
+                raise ValueError(f'Missing/truncated source: {filename}')
         headers={}
         for filename in sorted(set(wm.values())):
             path=a.model/filename;size=path.stat().st_size
