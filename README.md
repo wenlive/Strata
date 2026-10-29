@@ -24,6 +24,11 @@
 
 **Free, open source, and yours to run.** Use Strata on your desktop or with your favorite coding tools. No account needed.
 
+This branch adds an [experimental native Qwen3.6 BF16 text comparison path](docs/QWEN36_BF16_WINDOWS.md),
+enabled only by `STRATA_BUILD_Q36_BF16=ON`. It is separate from the existing
+quantized engine; full-model validation and remaining numerical differences
+are recorded in the linked notes.
+
 ## Models
 
 We recommend **ISTA-DASLab first**, then **Unsloth** and other providers, where a compatible model fits.
