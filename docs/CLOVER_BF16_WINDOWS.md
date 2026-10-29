@@ -295,3 +295,21 @@ no HTTP service, UI, multi-GPU, concurrency or CPU BF16 executor.
 
 Additional store timers now report host_copy_bytes/host_copy_ms (CPU weight memcpy), ram_staging_wait_ms, and demotion_wait_ms (D2H enqueue plus synchronization). These are host wall-clock sections; do not add GPU copy duration again. Historical logs omit unavailable new counters; they are not reported as measured zeros. Arithmetic and cache policy are unchanged. Follow-up measurements will use the new executable hash.
 
+## Follow-up BF16 comparison
+
+The independent [Qwen BF16 branch comparison](https://github.com/wenlive/Strata/blob/feat/qwen36-bf16-windows/docs/BF16_COMPARISON_WINDOWS.md)
+uses the same native storage/GEMM design, explicit greedy penalties 0/0/1,
+equal prompts and RAM/VRAM/staging budgets. It records new phase counters,
+Nsight analysis, complete Qwen checkpoint generation and remaining HF
+numerical failures. This is separate from the earlier default-penalty table.
+
+On the ordinary-text control with RAM/GPU expert caches 8/8 GiB, warm causal
+rates were Qwen 4.818 and Clover 4.808 token/s; Clover exact selfspec width 8
+was 2.010. Runtime widths 2/4 reached 3.088/2.931 in their warm requests and
+matched causal IDs. The trained block size remained 32. For the counting
+control, moving GPU cache from 6 to 8 GiB changed replay from zero GPU hits to
+all 2,463 hits; exact selfspec rose from 1.994 to 3.853 token/s at RAM 8 GiB.
+Host copying, synchronization, cache thrashing and rejected draft work are
+measured costs. Physical SSD bytes remain unmeasured. Native state consistency
+and these performance observations do not resolve the full HF mismatch.
+
