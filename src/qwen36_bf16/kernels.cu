@@ -58,8 +58,13 @@ __global__ void add_kernel(const BF* a,const BF* c,BF* out,int n) {
     int i=int(blockIdx.x*blockDim.x+threadIdx.x);if(i<n) out[i]=b(f(a[i])+f(c[i]));
 }
 __global__ void norm_kernel(const BF* in,const BF* w,const BF* gate,BF* out,int width,float eps,bool centered) {
+    // Warp 0 keeps the original 32-lane reduction order (bitwise-identical sum);
+    // the whole block then writes the row.
+    __shared__ float shared_sum;
     const int row=int(blockIdx.x),j=int(threadIdx.x);
-    const float sum=squared_sum4(in+row*width,width);
+    if(j<32) {const float partial=squared_sum4(in+row*width,width);if(j==0) shared_sum=partial;}
+    __syncthreads();
+    const float sum=shared_sum;
     float inv=rsqrtf(sum/float(width)+eps);
     for(int d=j;d<width;d+=int(blockDim.x)) {
         float value=f(in[row*width+d])*inv*(f(w[d])+(centered?1.0f:0.0f));
@@ -162,7 +167,12 @@ __global__ void factors_kernel(const BF* a,const BF* beta_in,const BF* A_log,con
 __global__ void scan_kernel(const BF* mixed,const float* q,const float* k,const float* g,const BF* beta,const float* in,float* outstate,BF* out,int t,int kh,int vh,int kd,int vd) {
     const int head=int(blockIdx.x),v=int(threadIdx.x),keyhead=head/(vh/kh),channels=2*kh*kd+vh*vd;
     float state[128];
-    for(int d=0;d<kd;++d) state[d]=in[(head*vd+v)*kd+d];
+    // Stage this head's [VD,KD] state through padded shared memory so global
+    // loads/stores are coalesced; arithmetic order is unchanged.
+    extern __shared__ float staged[];
+    for(int i=v;i<vd*kd;i+=int(blockDim.x)) staged[(i/kd)*(kd+1)+i%kd]=in[size_t(head)*vd*kd+i];
+    __syncthreads();
+    for(int d=0;d<kd;++d) state[d]=staged[v*(kd+1)+d];
     for(int token=0;token<t;++token) {
         const float* query=q+(token*kh+keyhead)*kd;const float* key=k+(token*kh+keyhead)*kd;
         float decay=expf(g[token*vh+head]),remembered=0;
@@ -173,7 +183,12 @@ __global__ void scan_kernel(const BF* mixed,const float* q,const float* k,const 
         for(int d=0;d<kd;++d) {state[d]+=delta*key[d];y+=state[d]*(query[d]*rsqrtf(float(kd)));}
         out[(token*vh+head)*vd+v]=b(y);
     }
-    if(outstate) for(int d=0;d<kd;++d) outstate[(head*vd+v)*kd+d]=state[d];
+    if(outstate) {
+        __syncthreads();
+        for(int d=0;d<kd;++d) staged[v*(kd+1)+d]=state[d];
+        __syncthreads();
+        for(int i=v;i<vd*kd;i+=int(blockDim.x)) outstate[size_t(head)*vd*kd+i]=staged[(i/kd)*(kd+1)+i%kd];
+    }
 }
 __global__ void preview_kernel(const BF* mixed,const float* q,const float* k,const float* g,const BF* scale,const BF* bias,const BF* hc,const float* state,BF* out,int t,int kh,int vh,int kd,int vd,int checkpoint) {
     __shared__ float logits[129];
@@ -200,7 +215,7 @@ __global__ void preview_kernel(const BF* mixed,const float* q,const float* k,con
 void cast(const float* x,BF* y,int n,cudaStream_t s) {cast_kernel<<<(n+255)/256,256,0,s>>>(x,y,n);}
 void router_weights(const BF* x,const int* ids,const int* allowed,float* weights,int rows,cudaStream_t s) {router_weights_kernel<<<rows,32,0,s>>>(x,ids,allowed,weights);}
 void residual(const BF* a,const BF* c,BF* y,int n,cudaStream_t s) {add_kernel<<<(n+255)/256,256,0,s>>>(a,c,y,n);}
-void norm(const BF* x,const BF* w,const BF* g,BF* y,int rows,int width,float eps,bool centered,cudaStream_t s) {norm_kernel<<<rows,32,0,s>>>(x,w,g,y,width,eps,centered);}
+void norm(const BF* x,const BF* w,const BF* g,BF* y,int rows,int width,float eps,bool centered,cudaStream_t s) {norm_kernel<<<rows,width>=1024?256:32,0,s>>>(x,w,g,y,width,eps,centered);}
 void swiglu(const BF* gate,const BF* up,BF* out,int n,cudaStream_t s) {swiglu_kernel<<<(n+255)/256,256,0,s>>>(gate,up,out,n);}
 void sigmoid_mul(const BF* x,const BF* g,BF* y,int rows,int width,bool scalar,cudaStream_t s) {sigmoid_kernel<<<(rows*width+255)/256,256,0,s>>>(x,g,y,rows*width,width,scalar);}
 void embedding(const BF* table,const int* ids,BF* y,int t,int width,cudaStream_t s) {embedding_kernel<<<(t*width+255)/256,256,0,s>>>(table,ids,y,t,width);}
@@ -219,7 +234,10 @@ void gdn_qk(const BF* mixed,float* q,float* k,int t,int kh,int vh,int kd,int vd,
 }
 void gdn_factors(const BF* a,const BF* beta_in,const BF* al,const BF* dt,float* g,BF* beta,int t,int h,cudaStream_t s) {factors_kernel<<<(t*h+255)/256,256,0,s>>>(a,beta_in,al,dt,g,beta,t*h,h);}
 void gdn_scan(const BF* mixed,const float* q,const float* k,const float* g,const BF* beta,const float* si,float* so,BF* y,int t,int kh,int vh,int kd,int vd,cudaStream_t s) {
-    require(kd==128&&vd==128,"Unsupported GDN scan dimensions");scan_kernel<<<vh,128,0,s>>>(mixed,q,k,g,beta,si,so,y,t,kh,vh,kd,vd);
+    require(kd==128&&vd==128,"Unsupported GDN scan dimensions");const size_t smem=size_t(vd)*(kd+1)*4;
+    static bool configured=false;
+    if(!configured) {Q36_CUDA(cudaFuncSetAttribute(scan_kernel,cudaFuncAttributeMaxDynamicSharedMemorySize,int(smem)));configured=true;}
+    scan_kernel<<<vh,128,smem,s>>>(mixed,q,k,g,beta,si,so,y,t,kh,vh,kd,vd);
 }
 void gdn_preview(const BF* mixed,const float* q,const float* k,const float* g,const BF* scale,const BF* bias,const BF* hc,const float* state,BF* y,int t,int kh,int vh,int kd,int vd,int checkpoint,cudaStream_t s) {
     require(t>0 && t<=32 && checkpoint>=t && checkpoint%t==0,"Preview width must divide unchanged checkpoint block size");
