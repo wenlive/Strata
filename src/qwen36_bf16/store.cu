@@ -159,8 +159,8 @@ const uint8_t* ExpertStore::direct_slice(const Json& slice,uint64_t at,uint64_t 
 void ExpertStore::copy_host(const uint8_t* host,BF* target,uint64_t bytes) {
     for(uint64_t at=0;at<bytes;) {
         const uint64_t n=std::min<uint64_t>(bytes-at,scratch_bytes_-4096);
-        Q36_CUDA(cudaEventSynchronize(scratch_done_));
-        std::memcpy(scratch_,host+at,size_t(n));
+        auto wait=Clock::now();Q36_CUDA(cudaEventSynchronize(scratch_done_));ram_staging_wait_ms_+=milliseconds(wait);
+        auto copy=Clock::now();std::memcpy(scratch_,host+at,size_t(n));host_copy_ms_+=milliseconds(copy);host_copy_bytes_+=n;
         Q36_CUDA(cudaMemcpyAsync(reinterpret_cast<uint8_t*>(target)+at,scratch_,size_t(n),cudaMemcpyHostToDevice,stream_));
         Q36_CUDA(cudaEventRecord(scratch_done_,stream_));h2d_bytes_+=n;at+=n;
     }
@@ -185,8 +185,9 @@ const BF* ExpertStore::acquire(int layer,int expert) {
             demoted_key=gpu_slots_[size_t(gs)].key;
             // Finish D2H before overwriting the GPU slot. One stream also
             // orders this copy after the prior expert's last computation.
+            auto demote=Clock::now();
             Q36_CUDA(cudaMemcpyAsync(eviction_,target,size_t(blob_bytes),cudaMemcpyDeviceToHost,stream_));
-            Q36_CUDA(cudaStreamSynchronize(stream_));d2h_bytes_+=blob_bytes;
+            Q36_CUDA(cudaStreamSynchronize(stream_));demotion_wait_ms_+=milliseconds(demote);d2h_bytes_+=blob_bytes;
         }
         gpu_slots_[size_t(gs)].key=-1;
     } else {
@@ -210,7 +211,7 @@ const BF* ExpertStore::acquire(int layer,int expert) {
             for(uint64_t at=0;at<bytes;) {
                 const uint64_t n=std::min<uint64_t>(bytes-at,scratch_bytes_-4096);
                 const auto* source=direct_slice(sl,at,n);
-                if(host) std::memcpy(host+base+at,source,size_t(n));
+                if(host) {auto copy=Clock::now();std::memcpy(host+base+at,source,size_t(n));host_copy_ms_+=milliseconds(copy);host_copy_bytes_+=n;}
                 Q36_CUDA(cudaMemcpyAsync(reinterpret_cast<uint8_t*>(target)+base+at,source,size_t(n),cudaMemcpyHostToDevice,stream_));
                 Q36_CUDA(cudaEventRecord(scratch_done_,stream_));h2d_bytes_+=n;at+=n;
             }
@@ -220,7 +221,7 @@ const BF* ExpertStore::acquire(int layer,int expert) {
     }
     if(demoted_key>=0) {
         const int dest=victim(ram_slots_);
-        std::memcpy(ram_.get()+uint64_t(dest)*blob_bytes,eviction_,size_t(blob_bytes));
+        auto copy=Clock::now();std::memcpy(ram_.get()+uint64_t(dest)*blob_bytes,eviction_,size_t(blob_bytes));host_copy_ms_+=milliseconds(copy);host_copy_bytes_+=blob_bytes;
         ram_slots_[size_t(dest)].key=demoted_key;ram_slots_[size_t(dest)].age=++age_;
     }
     if(gs>=0) {gpu_slots_[size_t(gs)].key=key;gpu_slots_[size_t(gs)].age=++age_;}
@@ -261,6 +262,7 @@ Json ExpertStore::stats() const {
             {"logical_file_read_bytes",logical_bytes_},{"aligned_file_requested_bytes",aligned_requested_},
             {"aligned_file_completed_bytes",aligned_completed_},{"read_calls",read_calls_},{"h2d_bytes",h2d_bytes_},{"d2h_bytes",d2h_bytes_},
             {"read_ms",read_ms_},{"host_staging_wait_ms",h2d_wait_ms_},
+            {"host_copy_bytes",host_copy_bytes_},{"host_copy_ms",host_copy_ms_},{"demotion_wait_ms",demotion_wait_ms_},{"ram_staging_wait_ms",ram_staging_wait_ms_},
             {"ram_cache_budget_bytes",ram_budget_},{"ram_cache_allocated_bytes",ram_slots_.size()*blob_bytes},
             {"vram_cache_budget_bytes",vram_budget_},{"vram_cache_allocated_bytes",gpu_.bytes},
             {"staging_budget_bytes",staging_budget_},{"host_staging_bytes",scratch_bytes_+eviction_bytes_},

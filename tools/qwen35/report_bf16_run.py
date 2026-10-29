@@ -35,6 +35,8 @@ def main():
             for key in ('logical_file_read_bytes','read_calls','gpu_hits','gpu_misses','ram_hits','ram_misses'):out[key]+=phase['cache_io'][key]
             out['h2d_weight_bytes']+=phase['cache_io']['h2d_bytes'];out['h2d_control_bytes']+=phase['control_h2d_bytes']
             out['d2h_weight_bytes']+=phase['cache_io'].get('d2h_bytes',0)
+            for key in ('host_copy_bytes','host_copy_ms','demotion_wait_ms','ram_staging_wait_ms','read_ms','host_staging_wait_ms'):
+                if key in phase['cache_io']:out[key]=out.get(key,0)+phase['cache_io'][key]
             out['unique_expert_evaluations']+=sum(phase['experts_unique_per_layer']);memories.append(phase['memory'])
         if first is None:first=run['output_tokens']
         summary={k:run[k] for k in ('repeat','run_kind','mode','ttft_ms','generation_elapsed_ms','steady_token_per_second','logical_expert_read_bytes_per_output_token')}

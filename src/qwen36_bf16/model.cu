@@ -5,9 +5,9 @@ namespace strata::qwen36_bf16 {
 Json counter_delta(const Json& after,const Json& before) {
     Json out;
     for(const char* key:{"gpu_hits","gpu_misses","ram_hits","ram_misses","logical_file_read_bytes",
-                         "aligned_file_requested_bytes","aligned_file_completed_bytes","read_calls","h2d_bytes","d2h_bytes"})
+                         "aligned_file_requested_bytes","aligned_file_completed_bytes","read_calls","h2d_bytes","d2h_bytes","host_copy_bytes"})
         out[key]=after.at(key).get<uint64_t>()-before.at(key).get<uint64_t>();
-    for(const char* key:{"read_ms","host_staging_wait_ms"}) out[key]=after.at(key).get<double>()-before.at(key).get<double>();
+    for(const char* key:{"read_ms","host_staging_wait_ms","host_copy_ms","demotion_wait_ms","ram_staging_wait_ms"}) out[key]=after.at(key).get<double>()-before.at(key).get<double>();
     return out;
 }
 const BF* Model::weight(const std::string& name) const {return weights_.at(name).as<BF>();}

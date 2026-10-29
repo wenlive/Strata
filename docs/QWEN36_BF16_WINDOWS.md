@@ -68,3 +68,6 @@ checks every checkpoint shard and rejects missing files.
 Use equal prompt/context/cache budgets and greedy settings for comparisons;
 Clover's default response penalties require a separate controlled configuration.
 Do not run the large checkpoint download during performance measurements.
+
+Store timing counters additionally distinguish CPU weight memcpy, RAM-hit staging waits and GPU demotion waits. They match the Clover instrumentation and do not change arithmetic or cache policy. Do not add CUDA copy durations to host waits as independent costs. Historical missing counters remain absent.
+

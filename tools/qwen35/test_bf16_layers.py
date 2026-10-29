@@ -136,8 +136,9 @@ def main():
                 gw=torch.tensor(nr['weights']).reshape(t,8).gather(-1,go);rw=routing['weights'].reshape(t,8).gather(-1,ro)
                 set_rows=int((gi!=ri).any(-1).sum());weight_delta=(gw-rw).abs()
                 weight_rms=float(weight_delta.square().mean().sqrt()/rw.square().mean().sqrt().clamp_min(1e-12))
+                ulps=(gw.bfloat16().view(torch.int16).int()-rw.bfloat16().view(torch.int16).int()).abs()
                 weights_pass=weight_rms<0.004 and float(weight_delta.max())<=0.02*max(float(rw.abs().max()),1e-6)+1e-6
-                route={'step':step_id,'different_route_slots':different,'different_expert_set_rows':set_rows,'max_per_expert_weight_error':float(weight_delta.max()),'per_expert_weight_relative_rms':weight_rms,'weights_passed':weights_pass,'native_ids':got_ids.tolist(),'reference_ids':routing['ids'].tolist()};routes.append(route)
+                route={'step':step_id,'different_route_slots':different,'different_expert_set_rows':set_rows,'max_per_expert_weight_error':float(weight_delta.max()),'max_bf16_ulp_error':int(ulps.max()),'per_expert_weight_relative_rms':weight_rms,'weights_passed':weights_pass,'native_ids':got_ids.tolist(),'reference_ids':routing['ids'].tolist(),'native_weights':nr['weights'],'reference_weights':routing['weights'].tolist()};routes.append(route)
                 if set_rows or not weights_pass:report['failures'].append({'layer':layer_id,**route})
                 if step['commit']:prefix+=t
                 state=root/'native'/f'step{step_id}'/'state'
