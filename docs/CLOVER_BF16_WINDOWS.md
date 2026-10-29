@@ -1,5 +1,10 @@
 # Experimental Clover BF16 on native Windows
 
+Latest numerical changes, unresolved HF differences and the fresh native
+regression are in [the numerical review](CLOVER_NUMERIC_REVIEW_WINDOWS.md).
+Fresh request controls and CUDA profiling are in [the full review](BF16_REVIEW_20261029.md).
+The measurements below describe their stated historical builds.
+
 The opt-in `strata-clover` CLI has generated short text with all 40 layers and
 the complete official BF16 checkpoint on an RTX 5070 Ti 16 GB. It implements
 causal inference, HF-style LowConfidence block denoising and SGLang-style self-speculation with exact acceptance.
